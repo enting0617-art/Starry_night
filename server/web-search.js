@@ -123,7 +123,11 @@ export function planWebSearch(query, enabled) {
   if (!enabled) return { shouldSearch: false, reason: 'disabled', needsClock: clockPattern.test(text) };
   const needsClock = clockPattern.test(text);
   if (needsClock && !explicitSearchPattern.test(text)) return { shouldSearch: false, reason: 'local-clock', needsClock: true };
-  if (explicitSearchPattern.test(text)) return { shouldSearch: true, reason: 'explicit', needsClock };
+  if (explicitSearchPattern.test(text)) {
+    const subject = text.replace(explicitSearchPattern, '').replace(/[，。！？?!、\s]/gu, '').trim();
+    if (subject.length < 2) return { shouldSearch: false, reason: 'needs-search-topic', needsClock };
+    return { shouldSearch: true, reason: 'explicit', needsClock };
+  }
   if (freshnessPattern.test(text)) return { shouldSearch: true, reason: 'fresh-information', needsClock };
   return { shouldSearch: false, reason: 'stable-information', needsClock };
 }
