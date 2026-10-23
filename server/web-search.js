@@ -119,17 +119,38 @@ function weatherCodeName(code) {
 const clockPattern = /(?:现在|当前|此刻|当地|本地).{0,6}(?:几点|时间|日期|几号|星期几)|(?:几点|what\s+time|current\s+(?:time|date)|today'?s\s+date)/iu;
 const explicitSearchPattern = /(?:搜索|搜一下|查一下|查查|联网查|上网查|网上找|检索|look\s*up|search\s+(?:for|the\s+web)|browse\s+(?:for|the\s+web))/iu;
 const freshnessPattern = /(?:最新|最近|今天|今日|昨天|明天|本周|本月|今年|目前|当前|现在|刚刚|实时|新闻|天气|气温|预报|价格|售价|汇率|股价|币价|比分|赛程|票房|排名|榜单|任职|现任|总统|总理|首相|CEO|版本|更新|发布|政策|法规|法律|规定|开放时间|营业时间|航班|火车|库存|利率|通胀|latest|recent|today|yesterday|tomorrow|current|currently|now|news|weather|forecast|price|exchange\s+rate|stock|score|schedule|version|release|president|prime\s+minister|CEO|law|regulation)/iu;
+const vagueSearchPattern = /^(?:去|帮我|麻烦你|请|一下|好不好|好吗|吧|呀|呢|了解|看看|查|搜|搜索|联网|上网|基础信息|详细|更多|资料|一下嘛|一下吧|这个|它|这款|游戏|关于)*$/iu;
 
-export function planWebSearch(query, enabled) {
+function compactSearchText(value) {
+  return String(value || '')
+    .replace(explicitSearchPattern, ' ')
+    .replace(/[，。！？?!、~～\s]/gu, ' ')
+    .replace(/(?:请|帮我|麻烦你|去|一下|好不好|好吗|呀|呢|吧)/giu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function contextualSearchTopic(messages) {
+  const recentUserMessages = Array.isArray(messages) ? messages.filter((message) => message?.role === 'user').slice(-8).reverse() : [];
+  for (const message of recentUserMessages) {
+    const candidate = compactSearchText(message.content);
+    if (candidate.length >= 2 && !vagueSearchPattern.test(candidate)) return candidate.slice(0, 300);
+  }
+  return '';
+}
+
+export function planWebSearch(query, enabled, messages = []) {
   const text = String(query || '').trim();
   if (!enabled) return { shouldSearch: false, reason: 'disabled', needsClock: clockPattern.test(text) };
   const needsClock = clockPattern.test(text);
   if (needsClock && !explicitSearchPattern.test(text)) return { shouldSearch: false, reason: 'local-clock', needsClock: true };
   if (explicitSearchPattern.test(text)) {
-    const subject = text.replace(explicitSearchPattern, '').replace(/[，。！？?!、\s]/gu, '').trim();
-    if (subject.length < 2) return { shouldSearch: false, reason: 'needs-search-topic', needsClock };
-    return { shouldSearch: true, reason: 'explicit', needsClock };
+    const subject = compactSearchText(text);
+    if (subject.length >= 2 && !vagueSearchPattern.test(subject)) return { shouldSearch: true, reason: 'explicit', needsClock, query: subject.slice(0, 300) };
+    const contextualTopic = contextualSearchTopic(messages.slice(0, -1));
+    if (contextualTopic) return { shouldSearch: true, reason: 'contextual-explicit', needsClock, query: contextualTopic };
+    return { shouldSearch: false, reason: 'needs-search-topic', needsClock };
   }
-  if (freshnessPattern.test(text)) return { shouldSearch: true, reason: 'fresh-information', needsClock };
+  if (freshnessPattern.test(text)) return { shouldSearch: true, reason: 'fresh-information', needsClock, query: text.slice(0, 300) };
   return { shouldSearch: false, reason: 'stable-information', needsClock };
 }

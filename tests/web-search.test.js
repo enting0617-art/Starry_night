@@ -18,3 +18,14 @@ test('does not search stable knowledge automatically', () => {
 test('honors an explicit search request', () => {
   assert.equal(planWebSearch('帮我上网查一下这个问题', true).reason, 'explicit');
 });
+
+test('uses earlier conversation context when a follow-up search request has no topic', () => {
+  const plan = planWebSearch('去搜索一下好不好呀', true, [
+    { role: 'user', content: '你知道鸣潮这款游戏吗？' },
+    { role: 'assistant', content: '我可以介绍基础信息。' },
+    { role: 'user', content: '去搜索一下好不好呀' },
+  ]);
+  assert.equal(plan.shouldSearch, true);
+  assert.equal(plan.reason, 'contextual-explicit');
+  assert.match(plan.query, /鸣潮/);
+});

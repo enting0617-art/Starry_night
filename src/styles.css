@@ -141,6 +141,7 @@ button { color: inherit; }
 .search-references strong, .search-references span { display: block; }
 .search-references strong { color: #315d66; font-size: 12px; }
 .search-references span { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.search-references .search-reference-empty { padding: 7px 0 2px; color: #8b633e; }
 .message-content { min-width: 0; line-height: 1.72; }
 .message-content p { margin: 0 0 12px; white-space: pre-wrap; }
 .message-content pre { background: #292a27; color: #f4f1ea; padding: 15px; border-radius: 10px; overflow-x: auto; }

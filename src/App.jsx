@@ -377,7 +377,7 @@ export default function App() {
           searchReferences = chunk.searchReferences;
           updateConversation(conversationId, (conversation) => ({
             ...conversation,
-            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, searchReferences } : message),
+            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, searchReferences, searchError: chunk.searchError || '' } : message),
           }));
         }
         const token = chunk.message?.content || '';
@@ -477,7 +477,7 @@ export default function App() {
             <ChevronDown size={15} />
           </div>
           {view === 'chat' && <button className={`icon-button ${autoSpeak ? 'voice-on' : ''}`} onClick={toggleAutoSpeak} aria-label={autoSpeak ? '关闭自动播报' : '开启自动播报'} title={autoSpeak ? '自动播报已开启' : '自动播报已关闭'}>{autoSpeak ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>}
-          {view === 'chat' && <button className={`icon-button ${webSearchEnabled ? 'search-on' : ''}`} onClick={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} aria-label={webSearchEnabled ? '关闭智能联网' : '开启智能联网'} title={config.webSearch?.enabled ? (webSearchEnabled ? '智能联网已开启：实时问题自动搜索' : '智能联网已关闭') : '网络搜索已在配置中关闭'}><Globe2 size={19} /></button>}
+          {view === 'chat' && <button className={`icon-button ${webSearchEnabled ? 'search-on' : ''}`} onClick={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} aria-label={webSearchEnabled ? '关闭智能联网' : '开启智能联网'} title={config.webSearch?.enabled ? (webSearchEnabled ? '智能联网已开启：需要核验的问题会自动搜索并附参考资料' : '智能联网已关闭') : '网络搜索已在配置中关闭'}><Globe2 size={19} /></button>}
           <button className="icon-button" onClick={() => setSettingsOpen((value) => !value)} aria-label="设置"><Settings2 size={19} /></button>
         </header>
 
@@ -489,7 +489,7 @@ export default function App() {
             <label>朗读声源<select value={voiceProvider} onChange={(event) => { stopVoice(); setVoiceError(''); setVoiceProvider(event.target.value); }}><option value="browser">浏览器语音</option><option value="sovits">本地 GPT-SoVITS</option></select></label>
             <label className="auto-speak-setting"><input type="checkbox" checked={autoSpeak} onChange={toggleAutoSpeak} />自动播报新回复</label>
             <label className="auto-speak-setting"><input type="checkbox" checked={webSearchEnabled} onChange={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} />智能联网搜索</label>
-            <span>默认关闭。开启后，新闻、天气、价格、版本等实时问题会强制搜索；普通知识不会浪费网络请求。时间读取本机 {config.webSearch?.timeZone || '当前'} 时区。</span>
+            <span>默认关闭。开启后，星空会自动搜索需要核验的内容；你说“查一下”“继续查”时，她会结合前文直接提取主题，不再反问搜索方向。搜索后会附可展开的参考资料。时间读取本机 {config.webSearch?.timeZone || '当前'} 时区。</span>
             <span>自动播报默认关闭。你可以点击每条回复下面的“听语音”；同一时间只播放一条，发送新消息会停止当前语音。</span>
             {voiceError && <span role="alert">{voiceError}</span>}
             {historyError && <span role="alert">{historyError}</span>}
@@ -516,7 +516,7 @@ export default function App() {
                   <div className="avatar">{message.role === 'user' ? <UserRound size={17} /> : <Bot size={18} />}</div>
                   <div className="message-content">
                     <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}</div>
-                    {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.searchReferences?.length > 0 && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences.length}）</summary><div className="search-reference-list">{message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>)}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
+                    {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.searchedWeb && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences?.length || 0}）</summary><div className="search-reference-list">{message.searchReferences?.length ? message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>) : <span className="search-reference-empty">{message.searchError ? `搜索未成功：${message.searchError}` : '本次搜索没有返回可引用的公开资料。'}</span>}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
                   </div>
                 </article>
               ))}
@@ -548,7 +548,7 @@ export default function App() {
               <button type="submit" className="send-button" disabled={(!input.trim() && !selectedEmoji && !selectedImage) || !model || imageUploading} aria-label="发送"><Send size={19} /></button>
             )}
           </form>
-          <small>Enter 发送 · Shift + Enter 换行 · 对话保存在项目文件夹{webSearchEnabled ? ' · 实时问题自动联网' : ''}</small>
+          <small>Enter 发送 · Shift + Enter 换行 · 对话保存在项目文件夹{webSearchEnabled ? ' · 智能联网已开启' : ''}</small>
         </div></>}
       </main>
     </div>
