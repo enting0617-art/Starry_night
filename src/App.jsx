@@ -392,10 +392,11 @@ export default function App() {
         }
         if (token) {
           assistantText += token;
+          const visibleAssistantText = sanitizeAssistantContent(assistantText, { preserveEmojiMarkers: true });
           setGenerationPhase('writing');
           updateConversation(conversationId, (conversation) => ({
             ...conversation,
-            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: message.content + token } : message),
+            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: visibleAssistantText } : message),
           }));
         }
       };

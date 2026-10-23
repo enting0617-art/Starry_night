@@ -24,6 +24,10 @@ test('removes unicode yellow-face emoji from assistant replies', () => {
   assert.equal(sanitizeAssistantContent('讲完啦～😊 🌙❤️'), '讲完啦～');
 });
 
+test('keeps a warm wave tone without triggering Markdown strikethrough', () => {
+  assert.equal(sanitizeAssistantContent('好哦~~我们继续聊吧~~'), '好哦～～我们继续聊吧～～');
+});
+
 test('hides private notebook commands from the visible reply', () => {
   assert.equal(sanitizeAssistantContent('我会记住的。\n[[NOTE:identity|用户叫星空之夜]]\n[[EMOJI:12]]'), '我会记住的。');
 });

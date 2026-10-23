@@ -2,6 +2,8 @@ export function sanitizeAssistantContent(text, { preserveEmojiMarkers = false } 
   let value = String(text || '');
   if (!preserveEmojiMarkers) value = value.replace(/\s*\[\[EMOJI:\d+\]\]\s*/giu, '\n');
   return value
+    // Markdown interprets paired ASCII tildes as strikethrough. Full-width waves preserve the tone safely.
+    .replace(/~{2,}/gu, (match) => '～'.repeat(match.length))
     .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
     .replace(/\p{Extended_Pictographic}(?:[\uFE0E\uFE0F])?(?:\u200D\p{Extended_Pictographic}(?:[\uFE0E\uFE0F])?)*/gu, '')
     .replace(/[\uFE0E\uFE0F]/gu, '')
