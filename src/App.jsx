@@ -371,6 +371,34 @@ export default function App() {
       const decoder = new TextDecoder();
       let buffer = '';
       let searchReferences = [];
+      const handleChunk = (chunk) => {
+        if (chunk.error) throw new Error(chunk.error);
+        if (Array.isArray(chunk.searchReferences)) {
+          searchReferences = chunk.searchReferences;
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, searchReferences } : message),
+          }));
+        }
+        const token = chunk.message?.content || '';
+        const thinkingToken = chunk.message?.thinking || '';
+        if (thinkingToken) {
+          thinkingText += thinkingToken;
+          setGenerationPhase('thinking');
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, thinking: thinkingText } : message),
+          }));
+        }
+        if (token) {
+          assistantText += token;
+          setGenerationPhase('writing');
+          updateConversation(conversationId, (conversation) => ({
+            ...conversation,
+            messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: message.content + token } : message),
+          }));
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
@@ -378,36 +406,11 @@ export default function App() {
         buffer = lines.pop() || '';
         for (const line of lines) {
           if (!line.trim()) continue;
-          const chunk = JSON.parse(line);
-          if (chunk.error) throw new Error(chunk.error);
-          if (Array.isArray(chunk.searchReferences)) {
-            searchReferences = chunk.searchReferences;
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, searchReferences } : message),
-            }));
-          }
-          const token = chunk.message?.content || '';
-          const thinkingToken = chunk.message?.thinking || '';
-          if (thinkingToken) {
-            thinkingText += thinkingToken;
-            setGenerationPhase('thinking');
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, thinking: thinkingText } : message),
-            }));
-          }
-          if (token) {
-            assistantText += token;
-            setGenerationPhase('writing');
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: message.content + token } : message),
-            }));
-          }
+          handleChunk(JSON.parse(line));
         }
         if (done) break;
       }
+      if (buffer.trim()) handleChunk(JSON.parse(buffer));
       if (!assistantText.trim()) throw new Error(thinkingText ? '模型完成了思考，但没有返回最终回答。请重试或更换模型。' : 'Ollama 已结束连接，但没有返回任何内容。');
       const assistantEmoji = findSelectedAssistantEmoji(assistantText, emojis);
       const cleanAssistantText = sanitizeAssistantContent(assistantText);
