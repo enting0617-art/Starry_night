@@ -90,11 +90,18 @@ async function pruneVoiceCache(config) {
 
 async function synthesizeVoiceInternal(text) {
   const config = await loadConfig();
+  const cleanText = String(text || '')
+    .replace(/\[\[EMOJI:\d+\]\]/giu, '')
+    .replace(/https?:\/\/\S+/giu, '')
+    .replace(/[*_`#>]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!cleanText) throw new Error('没有可朗读的文字');
   const refAudioPath = referencePath(config);
   if (!refAudioPath) throw new Error('请在配置文件中设置 voice.refAudioPath');
   const reference = await stat(refAudioPath);
   const cacheKey = createHash('sha256').update(JSON.stringify({
-    text,
+    text: cleanText,
     textLang: config.voice.textLang,
     promptLang: config.voice.promptLang,
     promptText: config.voice.promptText,
@@ -112,16 +119,16 @@ async function synthesizeVoiceInternal(text) {
     if (error.code !== 'ENOENT') throw error;
   }
   await ensureVoiceService(config);
-  const upstream = await fetch(`${config.voice.baseUrl}/tts`, {
+  const requestVoice = (textSplitMethod) => fetch(`${config.voice.baseUrl}/tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      text,
+      text: cleanText,
       text_lang: config.voice.textLang,
       ref_audio_path: refAudioPath,
       prompt_lang: config.voice.promptLang,
       prompt_text: config.voice.promptText,
-      text_split_method: 'cut5',
+      text_split_method: textSplitMethod,
       media_type: 'wav',
       streaming_mode: false,
       parallel_infer: false,
@@ -129,6 +136,12 @@ async function synthesizeVoiceInternal(text) {
     }),
     signal: AbortSignal.timeout(180000),
   });
+  let upstream = await requestVoice('cut5');
+  if (!upstream.ok && upstream.status === 400) {
+    const detail = await upstream.text();
+    if (/torch\.cat\(\): expected a non-empty list/iu.test(detail)) upstream = await requestVoice('cut1');
+    else throw new Error(`GPT-SoVITS 返回 ${upstream.status}: ${detail.slice(0, 300)}`);
+  }
   if (!upstream.ok) throw new Error(`GPT-SoVITS 返回 ${upstream.status}: ${(await upstream.text()).slice(0, 300)}`);
   const contentType = upstream.headers.get('content-type') || '';
   if (!contentType.includes('audio')) throw new Error('GPT-SoVITS 没有返回音频');

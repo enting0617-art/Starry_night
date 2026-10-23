@@ -29,6 +29,10 @@ export async function searchWeb(query) {
   if (!config.webSearch.enabled) throw new Error('配置已关闭网络搜索。');
   const safeQuery = String(query || '').trim().slice(0, 500);
   if (!safeQuery) return [];
+  if (/(天气|气温|温度|预报|weather|forecast)/iu.test(safeQuery)) {
+    const weather = await fetchWeather(safeQuery, config.webSearch.timeoutMs);
+    if (weather.length) return weather;
+  }
   const url = new URL(config.webSearch.endpoint);
   url.searchParams.set('q', safeQuery);
   const response = await fetch(url, {
@@ -50,6 +54,42 @@ export async function searchWeb(query) {
     if (results.length >= config.webSearch.maxResults) break;
   }
   return results;
+}
+
+async function fetchWeather(query, timeoutMs) {
+  const cityHint = String(query).replace(/(?:今天|今日|明天|天气|气温|温度|预报|怎么样|查询一下|查一下|请|帮我|weather|forecast)/giu, ' ').replace(/[，。？！?]/gu, ' ').trim();
+  const geocodeUrl = new URL('https://geocoding-api.open-meteo.com/v1/search');
+  geocodeUrl.searchParams.set('name', cityHint || query);
+  geocodeUrl.searchParams.set('count', '1');
+  geocodeUrl.searchParams.set('language', 'zh');
+  geocodeUrl.searchParams.set('format', 'json');
+  const geocodeResponse = await fetch(geocodeUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!geocodeResponse.ok) return [];
+  const location = (await geocodeResponse.json()).results?.[0];
+  if (!location?.latitude || !location?.longitude) return [];
+  const forecastUrl = new URL('https://api.open-meteo.com/v1/forecast');
+  forecastUrl.searchParams.set('latitude', String(location.latitude));
+  forecastUrl.searchParams.set('longitude', String(location.longitude));
+  forecastUrl.searchParams.set('current', 'temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m');
+  forecastUrl.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,weather_code');
+  forecastUrl.searchParams.set('forecast_days', '2');
+  forecastUrl.searchParams.set('timezone', 'auto');
+  const forecastResponse = await fetch(forecastUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!forecastResponse.ok) return [];
+  const forecast = await forecastResponse.json();
+  const current = forecast.current || {};
+  const daily = forecast.daily || {};
+  const weatherName = weatherCodeName(current.weather_code);
+  const date = daily.time?.[0] || current.time || '';
+  const high = daily.temperature_2m_max?.[0];
+  const low = daily.temperature_2m_min?.[0];
+  const snippet = `${location.name}${location.country ? `（${location.country}）` : ''} ${date}：${weatherName}，当前 ${current.temperature_2m ?? '未知'}°C，今日 ${low ?? '未知'}–${high ?? '未知'}°C，湿度 ${current.relative_humidity_2m ?? '未知'}%，风速 ${current.wind_speed_10m ?? '未知'} km/h。`;
+  return [{ title: `${location.name}天气（Open-Meteo）`, snippet, url: 'https://open-meteo.com/' }];
+}
+
+function weatherCodeName(code) {
+  const names = { 0: '晴', 1: '基本晴朗', 2: '局部多云', 3: '阴', 45: '雾', 48: '雾凇', 51: '小毛毛雨', 53: '毛毛雨', 55: '较强毛毛雨', 61: '小雨', 63: '中雨', 65: '大雨', 71: '小雪', 73: '中雪', 75: '大雪', 80: '阵雨', 81: '中阵雨', 82: '强阵雨', 95: '雷暴', 96: '雷暴伴冰雹', 99: '强雷暴伴冰雹' };
+  return names[code] || '天气状况未知';
 }
 
 const clockPattern = /(?:现在|当前|此刻|当地|本地).{0,6}(?:几点|时间|日期|几号|星期几)|(?:几点|what\s+time|current\s+(?:time|date)|today'?s\s+date)/iu;
