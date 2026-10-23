@@ -31,16 +31,21 @@ export default function DebugPanel({ models }) {
   ]);
   const [report, setReport] = useState(null);
   const [reportStatus, setReportStatus] = useState('');
+  const [searchControl, setSearchControl] = useState(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchOutput, setSearchOutput] = useState('');
 
   const refresh = useCallback(async () => {
     setChecking(true);
     try {
-      const [diagnosticResponse, logsResponse] = await Promise.all([
+      const [diagnosticResponse, logsResponse, searchResponse] = await Promise.all([
         fetch('/api/admin/diagnostics'),
         fetch('/api/admin/logs'),
+        fetch('/api/admin/search/status'),
       ]);
       setDiagnostics(await diagnosticResponse.json());
       setLogs((await logsResponse.json()).entries || []);
+      if (searchResponse.ok) setSearchControl(await searchResponse.json());
     } finally {
       setChecking(false);
     }
@@ -128,6 +133,43 @@ export default function DebugPanel({ models }) {
     setReportStatus('已复制诊断 JSON');
   }
 
+  async function runSearchAction(action) {
+    if (searchBusy) return;
+    setSearchBusy(true);
+    setSearchOutput('正在执行…');
+    try {
+      const response = await fetch('/api/admin/search/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '操作失败。');
+      setSearchControl(data.status);
+      setSearchOutput([data.result?.stdout, data.result?.stderr].filter(Boolean).join('\n').trim() || '操作完成。');
+    } catch (error) {
+      setSearchOutput(error.message);
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
+  async function loadSearchLogs() {
+    if (searchBusy) return;
+    setSearchBusy(true);
+    setSearchOutput('正在读取日志…');
+    try {
+      const response = await fetch('/api/admin/search/logs');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '无法读取日志。');
+      setSearchOutput(data.output || '暂时没有日志。');
+    } catch (error) {
+      setSearchOutput(error.message);
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
   return (
     <section className="debug-page">
       <div className="debug-heading">
@@ -145,6 +187,27 @@ export default function DebugPanel({ models }) {
       </div>
 
       {diagnostics?.error && <div className="diagnostic-error"><XCircle size={18} /><div><strong>连接诊断</strong><span>{diagnostics.error}</span></div></div>}
+
+      <div className="searxng-card">
+        <div className="card-title"><div><span>SearXNG 本地搜索</span><small>只管理项目自带的本机 Docker 服务，不执行任意终端命令。</small></div><span className={searchControl?.serviceReady ? 'search-status ready' : 'search-status'}>{searchControl?.serviceReady ? '服务正常' : '等待启动'}</span></div>
+        <div className="search-status-grid">
+          <div><small>Docker</small><strong>{searchControl?.dockerAvailable ? '已就绪' : '未检测到'}</strong></div>
+          <div><small>配置密钥</small><strong>{searchControl?.settingsReady ? '已设置' : '需要设置'}</strong></div>
+          <div><small>搜索提供方</small><strong>{searchControl?.providerEnabled ? '已启用' : '未启用'}</strong></div>
+          <div><small>本机地址</small><strong title={searchControl?.endpoint}>{searchControl?.endpoint || '正在检查…'}</strong></div>
+        </div>
+        <p className="search-control-detail">{searchControl?.serviceDetail || '正在检查 SearXNG 服务状态…'}</p>
+        <div className="searxng-actions">
+          {!searchControl?.settingsReady && <button className="run-button" onClick={() => runSearchAction('initialize')} disabled={searchBusy || !searchControl?.dockerAvailable}><Play size={16} />生成密钥并启动</button>}
+          <button className="run-button" onClick={() => runSearchAction('start')} disabled={searchBusy || !searchControl?.dockerAvailable}><Play size={16} />启动</button>
+          {!searchControl?.providerEnabled && <button className="secondary-button" onClick={() => runSearchAction('enable')} disabled={searchBusy || !searchControl?.serviceReady}>切换到 SearXNG</button>}
+          <button className="secondary-button" onClick={() => runSearchAction('stop')} disabled={searchBusy || !searchControl?.dockerAvailable}>停止</button>
+          <button className="secondary-button" onClick={() => runSearchAction('restart')} disabled={searchBusy || !searchControl?.dockerAvailable}>重启</button>
+          <button className="secondary-button" onClick={loadSearchLogs} disabled={searchBusy || !searchControl?.dockerAvailable}>查看日志</button>
+          <button className="secondary-button" onClick={refresh} disabled={checking || searchBusy}><RefreshCw size={15} className={checking ? 'spin' : ''} />检查状态</button>
+        </div>
+        {searchOutput && <pre className="search-control-output">{searchOutput}</pre>}
+      </div>
 
       <div className="terminal-card">
         <div className="terminal-topbar">

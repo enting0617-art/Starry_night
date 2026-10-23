@@ -15,6 +15,7 @@ import { loadConversations, saveConversations } from './conversation-db.js';
 import { planWebSearch, searchWeb } from './web-search.js';
 import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote } from './notebook.js';
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
+import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/searxng-control.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -218,6 +219,30 @@ app.get('/api/admin/report', async (_request, response) => {
 
 app.get('/api/admin/logs', (_request, response) => {
   response.json({ entries: requestLog });
+});
+
+app.get('/api/admin/search/status', async (_request, response, next) => {
+  try {
+    response.json(await getSearxngStatus());
+  } catch (error) {
+    next(new Error(`读取 SearXNG 状态失败: ${error.message}`, { cause: error }));
+  }
+});
+
+app.get('/api/admin/search/logs', async (_request, response, next) => {
+  try {
+    response.json(await getSearxngLogs());
+  } catch (error) {
+    next(new Error(`读取 SearXNG 日志失败: ${error.message}`, { cause: error }));
+  }
+});
+
+app.post('/api/admin/search/action', async (request, response, next) => {
+  try {
+    response.json(await runSearxngAction(String(request.body?.action || '')));
+  } catch (error) {
+    response.status(400).json({ error: error.message || 'SearXNG 操作失败。' });
+  }
 });
 
 app.post('/api/admin/terminal', async (request, response, next) => {

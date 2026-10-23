@@ -24,6 +24,7 @@
 - [Ollama](https://ollama.com/) 已安装并可以正常运行。
 - 至少安装一个聊天模型。
 - 如需本地声音，需要准备可用的 GPT-SoVITS 环境。
+- 如需使用 SearXNG 本地搜索，需要安装并启动 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
 
 ## 快速开始
 
@@ -116,6 +117,8 @@ npm run emojis:import
 ```powershell
 docker compose -f .\docker-compose.search.yml up -d
 ```
+
+也可以打开页面菜单中的“调试”→“SearXNG 本地搜索”控制面板。它会显示 Docker、密钥、本机服务和搜索提供方状态，并提供“生成密钥并启动”、停止、重启及日志查看按钮。确认服务正常后，点击“切换到 SearXNG”即可把本机覆盖配置写入 `config.local.json`；不会改动公共 `config.json`。控制面板仅执行项目固定的 Docker Compose 操作，不提供任意命令执行入口。
 
 首次启动前，请将 `searxng/settings.yml` 中的 `secret_key` 替换为随机字符串。随后在 `config.local.json` 写入：
 
