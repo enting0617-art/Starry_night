@@ -3,3 +3,4 @@ dist/
 .env
 config.local.json
 npm-debug.log*
+data/sandbox/

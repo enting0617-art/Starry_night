@@ -19,6 +19,7 @@ import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/sea
 import { buildShortTermContext } from './context-memory.js';
 import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
 import { applyTaskUpdates, createTask, getActiveTaskContext, listTasks, updateTask } from './task-store.js';
+import { getPythonSandboxStatus, runPythonInSandbox } from './python-sandbox.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -130,6 +131,14 @@ app.patch('/api/tasks/:id', (request, response, next) => {
     const task = updateTask(request.params.id, request.body || {});
     response.status(task ? 200 : 404).json({ task });
   } catch (error) { next(error); }
+});
+
+app.get('/api/python-sandbox/status', async (_request, response, next) => {
+  try { response.json(await getPythonSandboxStatus()); } catch (error) { next(error); }
+});
+
+app.post('/api/python-sandbox/run', async (request, response, next) => {
+  try { response.json(await runPythonInSandbox(request.body || {})); } catch (error) { next(error); }
 });
 
 app.post('/api/companion/proactive/check', async (request, response, next) => {
@@ -449,10 +458,14 @@ app.post('/api/chat', async (request, response, next) => {
     const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(latestUserText, config.emoji.assistantCandidateCount) : [];
     const emojiContext = emojiCandidates.length ? `${config.emoji.assistantAlwaysSend ? '每一条正常回复都必须从候选列表选择一张真实表情包，不能省略。' : '仅在确实适合当前语气时选择一张表情包。'}只能从下面列表选择一个，并在完整正文全部结束后另起最后一行写 [[EMOJI:序号]]，标记后绝对不能再写任何文字。每次恰好一个，不得编造序号。禁止使用 Unicode 绘文字或“小黄豆”表情，例如笑脸、月亮、爱心等字符；情绪只能通过本地表情包表达。只有实际输出了有效标记时才能在正文中说自己发送了表情。正文中禁止书写“星空发送的表情含义”“助手发送的表情含义”等说明，禁止自己描述、假设或创造列表之外的表情，禁止输出表情图片链接或 Markdown 图片；界面会根据真实序号显示图片。\n可用表情：\n${emojiCandidates.map((item) => `- ${item.id}: ${item.description}`).join('\n')}` : '';
     const activeTask = getActiveTaskContext(conversationId);
+    const pythonRequested = /(?:\bpython\b|\bpy\b|写(?:个|一段|一个)?(?:程序|脚本|代码)|运行(?:程序|脚本|代码)|代码执行)/iu.test(latestUserText);
+    const pythonContext = pythonRequested
+      ? '用户本轮明确请求 Python 编写或运行。你可选择使用隔离 Python 工具：先在正文正常说明你要做什么；若确实需要执行，正文结束、表情标记之前以独占块输出 [[PYTHON_CODE:安全文件名.py]]，下一行开始放 Python 源码，最后一行 [[/PYTHON_CODE]]。只能写纯计算、文本处理或数据演示代码；不得读写文件、访问网络、启动进程、导入未列出的模块或尝试规避限制。系统会在运行前审计，并仅在 Docker 的断网只读容器中运行。不要在用户没有明确请求时使用，也不要假装代码已经成功运行。运行结果会由界面回传。'
+      : '';
     const taskContext = activeTask
       ? `当前有一项持续任务。目标：${activeTask.goal}\n当前状态：${activeTask.currentState || '尚未写入'}\n下一步：${activeTask.nextStep || '尚未写入'}\n请围绕任务给出真实进展；完成、遇到阻塞或产生明确下一步时，在正文结束、表情标记之前另起一行输出 [[TASK_UPDATE:active|简短当前状态|下一步]]。状态只能是 active、blocked 或 done。该标记不会显示给用户。不要把闲聊强行变成任务，也不要虚构执行过的操作。`
       : '';
-    const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, taskContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
+    const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, taskContext, pythonContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
     const shortTerm = buildShortTermContext({ conversationId, messages });
     const shortTermContext = shortTerm.summary
       ? `本次对话较早部分的压缩摘要（仅用于保持上下文，不要提及此摘要）：\n${shortTerm.summary}`
@@ -543,6 +556,11 @@ app.post('/api/chat', async (request, response, next) => {
       assistantText += marker;
       response.write(`${JSON.stringify({ model, message: { role: 'assistant', content: marker }, done: false })}\n`);
     }
+    const pythonBlock = pythonRequested ? assistantText.match(/\[\[PYTHON_CODE:([^\]\r\n]+)\]\]\s*\n?([\s\S]*?)\n?\[\[\/PYTHON_CODE\]\]/iu) : null;
+    if (pythonBlock) {
+      const pythonSandbox = await runPythonInSandbox({ fileName: pythonBlock[1], source: pythonBlock[2] });
+      response.write(`${JSON.stringify({ pythonSandbox })}\n`);
+    }
     if (searchPlan.shouldSearch) {
       response.write(`${JSON.stringify({ searchReferences: searchResults.map(({ title, url, snippet }) => ({ title, url, snippet })), searchError })}\n`);
     }
@@ -551,6 +569,7 @@ app.post('/api/chat', async (request, response, next) => {
       .replace(/\s*\[\[EMOJI:\d+\]\]\s*/giu, '\n')
       .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
       .replace(/\s*\[\[TASK_UPDATE:(?:active|blocked|done)\|[^|\]\r\n]*\|[^\]\r\n]*\]\]\s*/giu, '\n')
+      .replace(/\s*\[\[PYTHON_CODE:[^\]\r\n]+\]\][\s\S]*?\[\[\/PYTHON_CODE\]\]\s*/giu, '\n')
       .replace(/^\s*(?:星空|助手|AI)发送的表情(?:包)?含义[:：].*$/gimu, '')
       .trim();
     if (config.notebook.enabled && !searchPlan.shouldSearch) void applyNotebookCommands(assistantText).catch((error) => console.warn(`Notebook update skipped: ${error.message}`));

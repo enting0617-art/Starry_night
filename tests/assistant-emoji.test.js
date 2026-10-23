@@ -35,3 +35,7 @@ test('hides private notebook commands from the visible reply', () => {
 test('hides private task checkpoints from the visible reply', () => {
   assert.equal(sanitizeAssistantContent('正在继续做。\n[[TASK_UPDATE:active|已完成资料整理|开始写实现]]\n[[EMOJI:12]]'), '正在继续做。');
 });
+
+test('hides sandbox source blocks from the visible reply', () => {
+  assert.equal(sanitizeAssistantContent('我来算一下。\n[[PYTHON_CODE:demo.py]]\nprint(2 + 2)\n[[/PYTHON_CODE]]'), '我来算一下。');
+});
