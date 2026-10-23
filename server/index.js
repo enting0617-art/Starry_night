@@ -16,6 +16,7 @@ import { planWebSearch, searchWeb } from './web-search.js';
 import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote } from './notebook.js';
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
 import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/searxng-control.js';
+import { buildShortTermContext } from './context-memory.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -316,7 +317,7 @@ app.post('/api/chat', async (request, response, next) => {
 
   try {
     const config = await loadConfig();
-    const { model, messages, systemPrompt, temperature, webSearch } = request.body || {};
+    const { model, messages, systemPrompt, temperature, webSearch, conversationId } = request.body || {};
     if (!model || !Array.isArray(messages)) {
       return response.status(400).json({ error: '缺少模型或聊天内容。' });
     }
@@ -376,7 +377,11 @@ app.post('/api/chat', async (request, response, next) => {
     const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(latestUserText, config.emoji.assistantCandidateCount) : [];
     const emojiContext = emojiCandidates.length ? `${config.emoji.assistantAlwaysSend ? '每一条正常回复都必须从候选列表选择一张真实表情包，不能省略。' : '仅在确实适合当前语气时选择一张表情包。'}只能从下面列表选择一个，并在完整正文全部结束后另起最后一行写 [[EMOJI:序号]]，标记后绝对不能再写任何文字。每次恰好一个，不得编造序号。禁止使用 Unicode 绘文字或“小黄豆”表情，例如笑脸、月亮、爱心等字符；情绪只能通过本地表情包表达。只有实际输出了有效标记时才能在正文中说自己发送了表情。正文中禁止书写“星空发送的表情含义”“助手发送的表情含义”等说明，禁止自己描述、假设或创造列表之外的表情，禁止输出表情图片链接或 Markdown 图片；界面会根据真实序号显示图片。\n可用表情：\n${emojiCandidates.map((item) => `- ${item.id}: ${item.description}`).join('\n')}` : '';
     const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
-    const hydratedMessages = messages.map((message) => {
+    const shortTerm = buildShortTermContext({ conversationId, messages });
+    const shortTermContext = shortTerm.summary
+      ? `本次对话较早部分的压缩摘要（仅用于保持上下文，不要提及此摘要）：\n${shortTerm.summary}`
+      : '';
+    const hydratedMessages = shortTerm.recent.map((message) => {
       const imageIds = Array.isArray(message.imageIds) ? message.imageIds.slice(0, 1) : [];
       if (!imageIds.length) return { role: message.role, content: String(message.content || '') };
       const images = imageIds.map((id) => getChatImage(id)).filter(Boolean);
@@ -384,8 +389,9 @@ app.post('/api/chat', async (request, response, next) => {
       if (images.some((image) => image.byteSize > config.vision.maxImageBytes)) throw new Error('聊天图片超过视觉识别大小限制。');
       return { role: message.role, content: String(message.content || ''), images: images.map((image) => image.imageData.toString('base64')) };
     });
-    const ollamaMessages = completePrompt
-      ? [{ role: 'system', content: completePrompt }, ...hydratedMessages]
+    const finalPrompt = [completePrompt, shortTermContext].filter(Boolean).join('\n\n');
+    const ollamaMessages = finalPrompt
+      ? [{ role: 'system', content: finalPrompt }, ...hydratedMessages]
       : hydratedMessages;
 
     const generationSignals = [controller.signal];
@@ -470,8 +476,8 @@ app.post('/api/chat', async (request, response, next) => {
       .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
       .replace(/^\s*(?:星空|助手|AI)发送的表情(?:包)?含义[:：].*$/gimu, '')
       .trim();
-    if (config.notebook.enabled) void applyNotebookCommands(assistantText).catch((error) => console.warn(`Notebook update skipped: ${error.message}`));
-    if (memorySafeAssistantText) void extractAndSaveMemories({ userText: latestUserText, assistantText: memorySafeAssistantText, model, config });
+    if (config.notebook.enabled && !searchPlan.shouldSearch) void applyNotebookCommands(assistantText).catch((error) => console.warn(`Notebook update skipped: ${error.message}`));
+    if (memorySafeAssistantText && !searchPlan.shouldSearch) void extractAndSaveMemories({ userText: latestUserText, assistantText: memorySafeAssistantText, model, config });
   } catch (error) {
     if (clientDisconnected) return;
     if (response.headersSent) {

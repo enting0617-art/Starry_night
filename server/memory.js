@@ -1,14 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { projectRoot } from './config.js';
+import { readMemoryItems, replaceMemoryItems } from './memory-store.js';
 
 const memoryPath = join(projectRoot, 'data', 'memories.json');
 let writeQueue = Promise.resolve();
 
 async function readMemories() {
   try {
-    const data = JSON.parse(await readFile(memoryPath, 'utf8'));
-    return Array.isArray(data) ? data : [];
+    const data = readMemoryItems('memory');
+    if (data.length) return data;
+    const legacy = JSON.parse(await readFile(memoryPath, 'utf8'));
+    return Array.isArray(legacy) ? legacy : [];
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;
@@ -21,6 +24,7 @@ function saveMemories(memories) {
     const temporary = `${memoryPath}.tmp`;
     await writeFile(temporary, `${JSON.stringify(memories, null, 2)}\n`, 'utf8');
     await rename(temporary, memoryPath);
+    replaceMemoryItems('memory', memories);
   });
   return writeQueue;
 }

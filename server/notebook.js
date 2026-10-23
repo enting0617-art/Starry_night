@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { loadConfig, projectRoot } from './config.js';
 import { listMemories } from './memory.js';
+import { readMemoryItems, replaceMemoryItems } from './memory-store.js';
 
 const notebookPath = join(projectRoot, 'data', 'xingkong-notes.json');
 const categories = new Set(['identity', 'preference', 'plan', 'shared', 'other']);
@@ -9,6 +10,8 @@ let writeQueue = Promise.resolve();
 
 async function readNotes() {
   try {
+    const items = readMemoryItems('notebook');
+    if (items.length) return items;
     const value = JSON.parse(await readFile(notebookPath, 'utf8'));
     return Array.isArray(value) ? value : [];
   } catch (error) {
@@ -23,6 +26,7 @@ function saveNotes(notes) {
     const temporary = `${notebookPath}.tmp`;
     await writeFile(temporary, `${JSON.stringify(notes, null, 2)}\n`, 'utf8');
     await rename(temporary, notebookPath);
+    replaceMemoryItems('notebook', notes);
   });
   return writeQueue;
 }

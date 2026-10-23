@@ -353,7 +353,7 @@ export default function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: visualModel, messages: requestMessages, systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled }),
+        body: JSON.stringify({ model: visualModel, messages: requestMessages, conversationId, systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
