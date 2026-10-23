@@ -1,12 +1,14 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve, relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { projectRoot } from './config.js';
 
-const root = resolve(projectRoot, 'data', 'sandbox', 'python');
-const image = 'python:3.12-alpine';
-const allowedModules = new Set(['math', 'statistics', 'random', 'itertools', 'collections', 'functools', 're', 'json', 'csv', 'datetime', 'decimal', 'fractions', 'string', 'textwrap']);
-const forbidden = /(?:__|\b(?:open|exec|eval|compile|globals|locals|vars|getattr|setattr|delattr|input|breakpoint|help|dir)\s*\(|\b(?:os|sys|subprocess|socket|http|urllib|requests|pathlib|shutil|ctypes|multiprocessing|threading|asyncio|importlib|pickle|marshal|sqlite3)\b)/iu;
+const helperPath = join(projectRoot, 'runtime', 'sandbox', 'starry-sandbox.exe');
+const runtimeCandidates = [
+  join(projectRoot, 'runtime', 'python', 'python.exe'),
+  join(projectRoot, 'GPT-SoVITS-v3lora-20250228', 'runtime', 'python.exe'),
+];
+const forbidden = /(?:\b(?:open|exec|eval|compile|globals|locals|vars|getattr|setattr|delattr|input|breakpoint)\s*\(|\b(?:subprocess|socket|http|urllib|requests|pathlib|shutil|ctypes|multiprocessing|threading|asyncio|importlib|pickle|marshal|sqlite3)\b)/iu;
 
 function safeFileName(value) {
   const name = String(value || '').trim();
@@ -14,15 +16,21 @@ function safeFileName(value) {
   return name;
 }
 
-function run(command, args, { timeoutMs = 10_000, maxOutput = 24_000 } = {}) {
+function pythonRuntimePath() { return runtimeCandidates.find(existsSync) || ''; }
+
+function runHelper(request) {
   return new Promise((resolveResult) => {
-    let stdout = ''; let stderr = ''; let timedOut = false;
-    const child = spawn(command, args, { windowsHide: true, shell: false });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-    child.stdout.on('data', (chunk) => { if (stdout.length < maxOutput) stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { if (stderr.length < maxOutput) stderr += chunk.toString(); });
-    child.on('error', (error) => { clearTimeout(timer); resolveResult({ ok: false, code: -1, stdout, stderr: error.message, timedOut }); });
-    child.on('close', (code) => { clearTimeout(timer); resolveResult({ ok: code === 0 && !timedOut, code, stdout: stdout.slice(0, maxOutput), stderr: stderr.slice(0, maxOutput), timedOut }); });
+    const child = spawn(helperPath, [], { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+    let output = ''; let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.min(70_000, Number(request.timeoutMs || 12_000) + 10_000));
+    child.stdout.on('data', (chunk) => { if (output.length < 2_300_000) output += chunk.toString(); });
+    child.on('error', (error) => { clearTimeout(timer); resolveResult({ ok: false, error: `无法启动原生沙盒：${error.message}` }); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (timedOut) return resolveResult({ ok: false, timedOut: true, error: '原生沙盒 broker 超时，已终止。' });
+      try { resolveResult(JSON.parse(output)); } catch { resolveResult({ ok: false, error: `原生沙盒返回无效数据：${output.slice(0, 500) || '没有输出'}` }); }
+    });
+    child.stdin.end(JSON.stringify(request));
   });
 }
 
@@ -33,32 +41,31 @@ export function auditPythonSource({ fileName, source }) {
   const text = String(source || '').replace(/\r\n?/gu, '\n');
   if (!text.trim()) errors.push('Python 文件不能为空。');
   if (text.length > 32_000) errors.push('Python 文件不能超过 32 KB。');
-  if (forbidden.test(text)) errors.push('检测到受限的文件、进程、网络、反射或动态执行能力。');
-  for (const match of text.matchAll(/^\s*(?:from\s+([a-zA-Z_][\w.]*)\s+import|import\s+([a-zA-Z_][\w.]*))/gmu)) {
-    const moduleName = (match[1] || match[2] || '').split('.')[0];
-    if (!allowedModules.has(moduleName)) errors.push(`不允许导入模块：${moduleName}`);
-  }
-  if (/^\s*(?:from|import)\s+/mu.test(text) && !text.match(/^\s*(?:from|import)\s+/mu)) errors.push('导入语句格式无效。');
-  return { ok: !errors.length, fileName: safeName, source: text, errors, policy: { image, network: false, readOnly: true, memoryMb: 256, timeoutSeconds: 12 } };
+  if (forbidden.test(text)) errors.push('静态审计检测到危险能力；严格模式拒绝执行。');
+  return { ok: !errors.length, fileName: safeName, source: text, errors, policy: { backend: 'windows-appcontainer-job', network: false, filesystem: 'isolated-workspace', memoryMb: 256, timeoutSeconds: 12, maxOutputBytes: 1_048_576 } };
 }
 
 export async function getPythonSandboxStatus() {
-  const docker = await run('docker', ['version', '--format', '{{.Server.Version}}'], { timeoutMs: 6_000, maxOutput: 2_000 });
-  const imageReady = docker.ok ? await run('docker', ['image', 'inspect', image], { timeoutMs: 8_000, maxOutput: 2_000 }) : { ok: false };
-  return { dockerReady: docker.ok, dockerDetail: (docker.ok ? docker.stdout : docker.stderr).trim(), image, imageReady: imageReady.ok, canRun: docker.ok && imageReady.ok, policy: { network: 'disabled', filesystem: 'read-only', memoryMb: 256, cpu: 0.5, pids: 64, timeoutSeconds: 12 } };
+  const pythonPath = pythonRuntimePath();
+  const helperReady = existsSync(helperPath);
+  return {
+    backend: 'windows-appcontainer-job', helperReady, helperPath: helperReady ? helperPath : '', pythonRuntimeReady: Boolean(pythonPath), pythonPath: pythonPath || '',
+    canRun: helperReady && Boolean(pythonPath),
+    detail: helperReady && pythonPath ? '原生 AppContainer + Job Object 沙盒已就绪。' : !helperReady ? '原生沙盒 helper 尚未构建。' : '受限 Python runtime 尚未随项目提供。',
+    policy: { network: 'AppContainer 无 network capability', filesystem: '仅 AppContainer workspace', memoryMb: 256, cpu: '50%', processes: 1, timeoutSeconds: 12, maxOutputBytes: 1_048_576 },
+  };
 }
 
 export async function runPythonInSandbox({ fileName, source }) {
   const audit = auditPythonSource({ fileName, source });
-  if (!audit.ok) return { ran: false, audit, error: '安全审计未通过，文件没有被运行。' };
+  if (!audit.ok) return { ran: false, audit, error: '安全审计未通过，代码没有写入或运行。' };
   const status = await getPythonSandboxStatus();
-  if (!status.canRun) return { ran: false, audit, status, error: status.dockerReady ? 'Python 隔离镜像尚未准备好。' : 'Docker 隔离环境不可用；为安全起见不会在宿主机运行 Python。' };
-  const runId = `${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8)}`;
-  const runDirectory = resolve(root, 'runs', runId);
-  if (!relative(root, runDirectory) || relative(root, runDirectory).startsWith('..')) throw new Error('沙盒目录校验失败。');
-  await mkdir(runDirectory, { recursive: true });
-  const sourcePath = join(runDirectory, audit.fileName);
-  await writeFile(sourcePath, audit.source, 'utf8');
-  const result = await run('docker', ['run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '64', '--memory', '256m', '--cpus', '0.5', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m', '-v', `${runDirectory}:/work:ro`, '-w', '/work', image, 'python', '-I', '-B', audit.fileName], { timeoutMs: 12_000 });
-  return { ran: true, audit, status, fileName: audit.fileName, exitCode: result.code, timedOut: result.timedOut, stdout: result.stdout, stderr: result.stderr };
+  if (!status.canRun) return { ran: false, audit, status, error: '原生 Windows 沙盒尚未就绪；为安全起见不会在宿主机运行 Python。' };
+  const workspaceRoot = resolve(projectRoot, 'data', 'sandbox', 'python');
+  const result = await runHelper({ pythonPath: status.pythonPath, workspaceRoot, code: audit.source, timeoutMs: 12_000, memoryBytes: 256 * 1024 * 1024, maxOutputBytes: 1_048_576 });
+  return {
+    ran: result.backend === 'appcontainer-job', audit, status, fileName: audit.fileName,
+    exitCode: result.exitCode ?? -1, timedOut: result.timedOut === true, stdout: String(result.stdout || ''), stderr: String(result.stderr || ''),
+    stdoutTruncated: result.stdoutTruncated === true, stderrTruncated: result.stderrTruncated === true, backend: result.backend || 'none', error: result.error || '',
+  };
 }

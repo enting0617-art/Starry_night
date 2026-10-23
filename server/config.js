@@ -164,7 +164,7 @@ export function validateConfig(config) {
   if (!Number.isInteger(config.history.maxMessagesPerConversation) || config.history.maxMessagesPerConversation < 10 || config.history.maxMessagesPerConversation > 5000) errors.push('history.maxMessagesPerConversation 必须是 10-5000 的整数');
   if (!Number.isInteger(config.history.maxPayloadBytes) || config.history.maxPayloadBytes < 1048576 || config.history.maxPayloadBytes > 67108864) errors.push('history.maxPayloadBytes 必须是 1MB-64MB 的整数');
   if (!Number.isInteger(config.emoji.assistantCandidateCount) || config.emoji.assistantCandidateCount < 4 || config.emoji.assistantCandidateCount > 80) errors.push('emoji.assistantCandidateCount 必须是 4-80 的整数');
-  if (!['duckduckgo', 'searxng'].includes(config.webSearch.provider)) errors.push('webSearch.provider 仅支持 duckduckgo 或 searxng');
+  if (config.webSearch.provider !== 'duckduckgo') errors.push('webSearch.provider 仅支持 duckduckgo');
   try {
     const searchUrl = new URL(config.webSearch.endpoint);
     if (!['https:', 'http:'].includes(searchUrl.protocol)) errors.push('webSearch.endpoint 必须使用 HTTP 或 HTTPS');

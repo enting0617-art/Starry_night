@@ -8,6 +8,7 @@ import ipaddr from 'ipaddr.js';
 import robotsParser from 'robots-parser';
 import express from 'express';
 import { loadConfig, projectRoot } from '../config.js';
+import { searchDuckDuckGo } from '../web-search.js';
 
 const cachePath = join(projectRoot, 'data', 'search-cache.json');
 const userAgent = 'StarryNightBot/0.1 (+https://github.com/enting0617-art/Starry_night)';
@@ -77,16 +78,8 @@ export async function webSearch(query, limit = 5) {
   const key = cacheKey('web', { query: safeQuery, limit });
   const cached = await getCached(key);
   if (cached) return cached.map((item) => ({ ...item, cached: true }));
-  if (config.webSearch.provider !== 'searxng') throw apiError('SOURCE_DISABLED', 'SearXNG 尚未启用；请在 config.local.json 中启用后使用。');
-  const endpoint = new URL('/search', config.webSearch.endpoint);
-  endpoint.searchParams.set('q', safeQuery);
-  endpoint.searchParams.set('format', 'json');
-  endpoint.searchParams.set('language', 'zh-CN');
-  endpoint.searchParams.set('safesearch', '1');
-  const response = await fetchWithRetry(endpoint, { headers: { Accept: 'application/json', 'User-Agent': userAgent }, signal: AbortSignal.timeout(config.webSearch.timeoutMs) });
-  if (!response.ok) throw apiError(response.status === 429 ? 'RATE_LIMITED' : 'API_UNAVAILABLE', `SearXNG HTTP ${response.status}`);
-  const body = await response.json();
-  const results = (body.results || []).slice(0, Math.min(Math.max(Number(limit) || 5, 1), 10)).map((item) => ({ title: cleanText(item.title, 240), url: String(item.url || ''), snippet: cleanText(item.content, 700), source: item.engine || 'searxng', fetchedAt: new Date().toISOString() })).filter((item) => item.url.startsWith('http'));
+  const requestedLimit = Math.min(Math.max(Number(limit) || 5, 1), 10);
+  const results = (await searchDuckDuckGo(safeQuery, requestedLimit)).map((item) => ({ title: cleanText(item.title, 240), url: String(item.url || ''), snippet: cleanText(item.snippet, 700), source: 'duckduckgo', fetchedAt: new Date().toISOString() })).filter((item) => item.url.startsWith('http'));
   await setCached(key, results, config.search.cacheSearchTtlMs);
   return results;
 }
@@ -196,9 +189,7 @@ export function createSearchRouter() {
   const router = express.Router();
   router.get('/health', async (_request, response) => {
     const config = await loadConfig();
-    let searxng = false;
-    try { const probe = await fetch(new URL('/search?q=health&format=json', config.webSearch.endpoint), { signal: AbortSignal.timeout(3000) }); searxng = probe.ok; } catch { /* unavailable is reported, not fatal */ }
-    response.json({ ok: true, provider: config.webSearch.provider, searxng });
+    response.json({ ok: true, provider: config.webSearch.provider });
   });
   router.post('/web_search', async (request, response, next) => { try { response.json({ results: await webSearch(request.body?.query, request.body?.limit) }); } catch (error) { next(error); } });
   router.post('/wiki_search', async (request, response, next) => { try { response.json({ results: await wikiSearch(request.body?.query, request.body?.limit, request.body?.language) }); } catch (error) { next(error); } });

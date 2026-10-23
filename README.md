@@ -2,7 +2,7 @@
 
 星空是一个以 **Ollama 本地模型**为核心的个人 AI 聊天平台。项目支持流式对话、长期记忆、AI 独立笔记本、图像理解、本地表情包、联网搜索和 GPT-SoVITS 语音，同时尽量把模型、端口、提示词、数据目录和功能开关保留为可配置项。
 
-当前版本：`0.14.0`
+当前版本：`0.15.0`
 
 ## 主要功能
 
@@ -18,7 +18,7 @@
 - 角色名为“星空”，角色提示词可以独立编辑。
 - 支持可控的主动陪伴：星空可在你空闲一段时间后主动留下最多三段消息。
 - 内置本地任务工作台，让多轮任务保持目标、进度和下一步。
-- 支持受限 Python 工具：每次运行先审计，只在断网只读容器中执行。
+- 支持受限 Python 工具：每次运行先审计，只在 Windows 原生沙盒中执行。
 
 ## 运行环境
 
@@ -27,7 +27,7 @@
 - [Ollama](https://ollama.com/) 已安装并可以正常运行。
 - 至少安装一个聊天模型。
 - 如需本地声音，需要准备可用的 GPT-SoVITS 环境。
-- 如需使用 SearXNG 本地搜索，需要安装并启动 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+- 不需要 Docker，也不需要额外安装 Python；项目使用自身携带的受限 Python runtime。
 
 ## 快速开始
 
@@ -72,8 +72,6 @@ cd C:\Users\entin\Desktop\3.4\BE
 
 如果双击后一闪而过，请从 PowerShell 运行上面的命令，这样可以看到具体错误。
 
-如需启动 SearXNG 而 Docker Desktop 尚未运行，双击 `start-docker-admin.bat`。它会请求管理员授权、启动 Docker Desktop 并等待引擎就绪；不会修改系统功能或安装 Docker。
-
 ## 基本使用
 
 ### 聊天与停止生成
@@ -116,33 +114,11 @@ npm run emojis:import
 
 搜索结果会作为不可信参考资料交给模型，并要求模型给出来源。每次实际联网后，回复底部都会显示可展开的参考资料；搜索失败或没有结果时也会明确显示。联网搜索会把搜索关键词发送给外部搜索服务，这是本项目默认情况下少数会离开本机的数据。
 
-### 可选本地 AI 搜索底座
+### 联网工具与隐私
 
-项目新增了可选的 SearXNG 搜索工具层，提供本地缓存、Wikipedia 查询、网页正文提取、robots.txt 检查和 SSRF 防护。它默认不会替换现有 DuckDuckGo 搜索；确认 Docker 可用后，才按以下方式启用：
+联网搜索默认使用公开搜索结果与可验证网页来源，不会启动 Docker 服务。工具循环提供 `web_search`、`wiki_search` 和 `read_url`：网页读取会拒绝 localhost、私网地址和 robots.txt 禁止的路径，搜索缓存仅保存在 `data/search-cache.json`，不会进入长期记忆。启用工具循环前，建议将聊天模型切换为已验证支持 Tools 的 `qwen3.5:9b`；任一工具不可用时会自动回退到普通搜索路径。
 
-```powershell
-docker compose -f .\docker-compose.search.yml up -d
-```
-
-也可以打开页面菜单中的“调试”→“SearXNG 本地搜索”控制面板。它会显示 Docker、密钥、本机服务和搜索提供方状态，并提供“生成密钥并启动”、停止、重启及日志查看按钮。确认服务正常后，点击“切换到 SearXNG”即可把本机覆盖配置写入 `config.local.json`；不会改动公共 `config.json`。控制面板仅执行项目固定的 Docker Compose 操作，不提供任意命令执行入口。
-
-首次启动前，请将 `searxng/settings.yml` 中的 `secret_key` 替换为随机字符串。随后在 `config.local.json` 写入：
-
-```json
-{
-  "webSearch": {
-    "provider": "searxng",
-    "endpoint": "http://127.0.0.1:8888"
-  },
-  "search": {
-    "agentEnabled": true
-  }
-}
-```
-
-启用工具循环前，建议将聊天模型切换为已验证支持 Tools 的 `qwen3.5:9b`。启用后，星空会先让本地模型在最多 4 轮、最多 8 次调用内决定是否执行 `web_search`、`wiki_search` 和 `read_url`，再把实际来源交给最终流式回答。任一工具不可用时会自动回退到原有搜索路径。
-
-可用的本地工具接口包括 `POST /api/search-tools/web_search`、`POST /api/search-tools/wiki_search`、`POST /api/search-tools/read_url` 与 `GET /api/search-tools/health`。网页读取会拒绝 localhost、私网地址和 robots.txt 禁止的路径，搜索缓存仅保存在 `data/search-cache.json`，不会进入长期记忆。
+可用的本地工具接口包括 `POST /api/search-tools/web_search`、`POST /api/search-tools/wiki_search`、`POST /api/search-tools/read_url` 与 `GET /api/search-tools/health`。
 
 ### 语音
 
@@ -190,15 +166,13 @@ docker compose -f .\docker-compose.search.yml up -d
 
 ### Python 隔离工具
 
-当你在本轮明确要求星空编写或运行 Python 时，她可以提交一段 Python 到本地隔离工具。每次运行都依次经过：文件名检查、大小限制、模块白名单、危险 API 检查，再由 Docker 在断网、只读、无额外 Linux capabilities、256 MB 内存、0.5 CPU、64 个进程和 12 秒超时的容器中运行。
+当你在本轮明确要求星空编写或运行 Python 时，她可以提交一段 Python 到本地隔离工具。每次运行都依次经过：文件名检查、大小限制、模块白名单与危险 API 检查；随后交给项目内的 Windows 原生 helper，在 **AppContainer（无网络能力）+ Job Object** 中运行。沙盒限制为：仅可访问该次独立工作目录、单进程、256 MB 内存、50% CPU、12 秒超时和 1 MB 输出上限。
 
-代码只会写入项目的 `data/sandbox/python/`，该目录已被 Git 忽略；容器仅以只读方式挂载本次运行目录。Docker 或 Python 镜像不可用时，系统会拒绝运行，绝不会降级为在 Windows 宿主机直接执行。运行结果、审计拒绝理由和错误输出显示在对应回复底部。
+代码只会写入项目的 `data/sandbox/python/`，该目录已被 Git 忽略。原生 helper 或受限 Python runtime 不可用时，系统会拒绝运行，绝不会降级为在 Windows 宿主机直接执行。运行结果、审计拒绝理由和错误输出显示在对应回复底部。
 
-首次准备隔离镜像（确认 Docker Desktop 已正常运行后）：
+`runtime/sandbox/starry-sandbox.exe` 已随项目提供。当前开发版会优先寻找 `runtime/python/python.exe`，并兼容使用项目已有 GPT-SoVITS runtime 中的 Python；正式发布包应把受限 runtime 放入 `runtime/python/`。用户不需要单独安装 Python 或 Docker。
 
-```powershell
-docker pull python:3.12-alpine
-```
+安全边界与发布包要求见 [Windows 原生 Python 沙盒说明](docs/windows-native-sandbox.md)。
 
 ## 数据存放与备份
 
@@ -303,7 +277,7 @@ BE/
 ├─ config.example.json      配置示例
 ├─ xingkong-persona.txt     星空角色提示词
 ├─ start.bat                Windows 一键启动
-├─ start-docker-admin.bat   以管理员权限启动 Docker Desktop
+├─ runtime/sandbox/         Windows 原生 Python 沙盒 helper
 ├─ start-voice.bat          GPT-SoVITS 启动脚本
 └─ launcher.js              启动检查与浏览器打开逻辑
 ```

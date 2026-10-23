@@ -15,7 +15,6 @@ import { loadConversations, saveConversations } from './conversation-db.js';
 import { planWebSearch, searchWeb } from './web-search.js';
 import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote, updateNotebookNote } from './notebook.js';
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
-import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/searxng-control.js';
 import { buildShortTermContext } from './context-memory.js';
 import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
 import { applyTaskUpdates, createTask, getActiveTaskContext, listTasks, updateTask } from './task-store.js';
@@ -303,30 +302,6 @@ app.get('/api/admin/logs', (_request, response) => {
   response.json({ entries: requestLog });
 });
 
-app.get('/api/admin/search/status', async (_request, response, next) => {
-  try {
-    response.json(await getSearxngStatus());
-  } catch (error) {
-    next(new Error(`读取 SearXNG 状态失败: ${error.message}`, { cause: error }));
-  }
-});
-
-app.get('/api/admin/search/logs', async (_request, response, next) => {
-  try {
-    response.json(await getSearxngLogs());
-  } catch (error) {
-    next(new Error(`读取 SearXNG 日志失败: ${error.message}`, { cause: error }));
-  }
-});
-
-app.post('/api/admin/search/action', async (request, response) => {
-  try {
-    response.json(await runSearxngAction(String(request.body?.action || '')));
-  } catch (error) {
-    response.status(400).json({ error: error.message || 'SearXNG 操作失败。' });
-  }
-});
-
 app.post('/api/admin/terminal', async (request, response, next) => {
   try {
     const config = await loadConfig();
@@ -460,7 +435,7 @@ app.post('/api/chat', async (request, response, next) => {
     const activeTask = getActiveTaskContext(conversationId);
     const pythonRequested = /(?:\bpython\b|\bpy\b|写(?:个|一段|一个)?(?:程序|脚本|代码)|运行(?:程序|脚本|代码)|代码执行)/iu.test(latestUserText);
     const pythonContext = pythonRequested
-      ? '用户本轮明确请求 Python 编写或运行。你可选择使用隔离 Python 工具：先在正文正常说明你要做什么；若确实需要执行，正文结束、表情标记之前以独占块输出 [[PYTHON_CODE:安全文件名.py]]，下一行开始放 Python 源码，最后一行 [[/PYTHON_CODE]]。只能写纯计算、文本处理或数据演示代码；不得读写文件、访问网络、启动进程、导入未列出的模块或尝试规避限制。系统会在运行前审计，并仅在 Docker 的断网只读容器中运行。不要在用户没有明确请求时使用，也不要假装代码已经成功运行。运行结果会由界面回传。'
+      ? '用户本轮明确请求 Python 编写或运行。你可选择使用隔离 Python 工具：先在正文正常说明你要做什么；若确实需要执行，正文结束、表情标记之前以独占块输出 [[PYTHON_CODE:安全文件名.py]]，下一行开始放 Python 源码，最后一行 [[/PYTHON_CODE]]。只能写纯计算、文本处理或数据演示代码；不得读写文件、访问网络、启动进程、导入未列出的模块或尝试规避限制。系统会在运行前审计，并仅在 Windows AppContainer + Job Object 原生沙盒中运行（无网络、受限文件系统、单进程和资源限制）。不要在用户没有明确请求时使用，也不要假装代码已经成功运行。运行结果会由界面回传。'
       : '';
     const taskContext = activeTask
       ? `当前有一项持续任务。目标：${activeTask.goal}\n当前状态：${activeTask.currentState || '尚未写入'}\n下一步：${activeTask.nextStep || '尚未写入'}\n请围绕任务给出真实进展；完成、遇到阻塞或产生明确下一步时，在正文结束、表情标记之前另起一行输出 [[TASK_UPDATE:active|简短当前状态|下一步]]。状态只能是 active、blocked 或 done。该标记不会显示给用户。不要把闲聊强行变成任务，也不要虚构执行过的操作。`

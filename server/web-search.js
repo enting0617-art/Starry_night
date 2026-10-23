@@ -1,5 +1,4 @@
 import { loadConfig } from './config.js';
-import { webSearch as searchSearxng } from './search/search-tools.js';
 
 function decodeHtml(value) {
   const entities = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' };
@@ -25,17 +24,11 @@ function normalizeResultUrl(value) {
   } catch { return ''; }
 }
 
-export async function searchWeb(query) {
+export async function searchDuckDuckGo(query, limit) {
   const config = await loadConfig();
   if (!config.webSearch.enabled) throw new Error('配置已关闭网络搜索。');
   const safeQuery = String(query || '').trim().slice(0, 500);
   if (!safeQuery) return [];
-  if (/(天气|气温|温度|预报|weather|forecast)/iu.test(safeQuery)) {
-    const weather = await fetchWeather(safeQuery, config.webSearch.timeoutMs);
-    if (weather.length) return weather;
-    return [];
-  }
-  if (config.webSearch.provider === 'searxng') return searchSearxng(safeQuery, config.webSearch.maxResults);
   const url = new URL(config.webSearch.endpoint);
   url.searchParams.set('q', safeQuery);
   const response = await fetch(url, {
@@ -54,9 +47,21 @@ export async function searchWeb(query) {
     const resultUrl = normalizeResultUrl(titleMatch[1]);
     if (!resultUrl) continue;
     results.push({ title: decodeHtml(titleMatch[2]).slice(0, 240), url: resultUrl, snippet: decodeHtml(snippetMatch?.[1]).slice(0, 600) });
-    if (results.length >= config.webSearch.maxResults) break;
+    if (results.length >= (limit || config.webSearch.maxResults)) break;
   }
   return results;
+}
+
+export async function searchWeb(query) {
+  const config = await loadConfig();
+  const safeQuery = String(query || '').trim().slice(0, 500);
+  if (!safeQuery) return [];
+  if (/(天气|气温|温度|预报|weather|forecast)/iu.test(safeQuery)) {
+    const weather = await fetchWeather(safeQuery, config.webSearch.timeoutMs);
+    if (weather.length) return weather;
+    return [];
+  }
+  return searchDuckDuckGo(safeQuery, config.webSearch.maxResults);
 }
 
 async function fetchWeather(query, timeoutMs) {
