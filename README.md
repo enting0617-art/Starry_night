@@ -69,6 +69,8 @@ cd C:\Users\entin\Desktop\3.4\BE
 
 如果双击后一闪而过，请从 PowerShell 运行上面的命令，这样可以看到具体错误。
 
+如需启动 SearXNG 而 Docker Desktop 尚未运行，双击 `start-docker-admin.bat`。它会请求管理员授权、启动 Docker Desktop 并等待引擎就绪；不会修改系统功能或安装 Docker。
+
 ## 基本使用
 
 ### 聊天与停止生成
@@ -270,6 +272,7 @@ BE/
 ├─ config.example.json      配置示例
 ├─ xingkong-persona.txt     星空角色提示词
 ├─ start.bat                Windows 一键启动
+├─ start-docker-admin.bat   以管理员权限启动 Docker Desktop
 ├─ start-voice.bat          GPT-SoVITS 启动脚本
 └─ launcher.js              启动检查与浏览器打开逻辑
 ```
