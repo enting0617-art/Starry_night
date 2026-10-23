@@ -15,7 +15,15 @@ set "DOCKER_DESKTOP="
 for %%P in (
   "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
   "%LocalAppData%\Docker\Docker Desktop.exe"
+  "%LocalAppData%\Programs\DockerDesktop\Docker Desktop.exe"
 ) do if exist "%%~P" set "DOCKER_DESKTOP=%%~P"
+
+REM Per-user Docker installs place docker.exe in resources\bin. Resolve the app from it.
+if not defined DOCKER_DESKTOP (
+  for /f "delims=" %%D in ('where docker.exe 2^>nul') do (
+    for %%R in ("%%~dpD..\..\Docker Desktop.exe") do if exist "%%~fR" set "DOCKER_DESKTOP=%%~fR"
+  )
+)
 
 if not defined DOCKER_DESKTOP (
   echo.
