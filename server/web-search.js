@@ -32,6 +32,7 @@ export async function searchWeb(query) {
   if (/(天气|气温|温度|预报|weather|forecast)/iu.test(safeQuery)) {
     const weather = await fetchWeather(safeQuery, config.webSearch.timeoutMs);
     if (weather.length) return weather;
+    return [];
   }
   const url = new URL(config.webSearch.endpoint);
   url.searchParams.set('q', safeQuery);
@@ -57,15 +58,34 @@ export async function searchWeb(query) {
 }
 
 async function fetchWeather(query, timeoutMs) {
-  const cityHint = String(query).replace(/(?:今天|今日|明天|天气|气温|温度|预报|怎么样|查询一下|查一下|请|帮我|weather|forecast)/giu, ' ').replace(/[，。？！?]/gu, ' ').trim();
+  const rawQuery = String(query || '').trim();
+  const cityMatch = rawQuery.match(/(?:今天|今日|明天|目前|现在)?\s*([\p{Script=Han}]{2,12}?)(?:市|区|县)?的?(?:天气|气温|温度|预报)/u);
+  const cityHint = (cityMatch?.[1] || rawQuery
+    .replace(/(?:今天|今日|明天|目前|现在|天气|气温|温度|预报|怎么样|查询一下|查一下|查询|请|帮我|weather|forecast)/giu, ' ')
+    .replace(/[，。？！?]/gu, ' ')
+    .trim()).replace(/^(?:一下|一下子|我想知道)\s*/u, '').trim();
+  const knownCities = {
+    上海: { name: '上海', latitude: 31.2304, longitude: 121.4737 },
+    北京: { name: '北京', latitude: 39.9042, longitude: 116.4074 },
+    广州: { name: '广州', latitude: 23.1291, longitude: 113.2644 },
+    深圳: { name: '深圳', latitude: 22.5431, longitude: 114.0579 },
+    杭州: { name: '杭州', latitude: 30.2741, longitude: 120.1551 },
+    成都: { name: '成都', latitude: 30.5728, longitude: 104.0668 },
+    Edmonton: { name: 'Edmonton', latitude: 53.5461, longitude: -113.4938 },
+  };
+  let location = Object.entries(knownCities).find(([city]) => cityHint.includes(city))?.[1];
   const geocodeUrl = new URL('https://geocoding-api.open-meteo.com/v1/search');
   geocodeUrl.searchParams.set('name', cityHint || query);
   geocodeUrl.searchParams.set('count', '1');
   geocodeUrl.searchParams.set('language', 'zh');
   geocodeUrl.searchParams.set('format', 'json');
-  const geocodeResponse = await fetch(geocodeUrl, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!geocodeResponse.ok) return [];
-  const location = (await geocodeResponse.json()).results?.[0];
+  try {
+    if (!location) {
+      const geocodeResponse = await fetch(geocodeUrl, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!geocodeResponse.ok) return [];
+      location = (await geocodeResponse.json()).results?.[0];
+    }
+  } catch { return []; }
   if (!location?.latitude || !location?.longitude) return [];
   const forecastUrl = new URL('https://api.open-meteo.com/v1/forecast');
   forecastUrl.searchParams.set('latitude', String(location.latitude));
@@ -74,7 +94,8 @@ async function fetchWeather(query, timeoutMs) {
   forecastUrl.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,weather_code');
   forecastUrl.searchParams.set('forecast_days', '2');
   forecastUrl.searchParams.set('timezone', 'auto');
-  const forecastResponse = await fetch(forecastUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  let forecastResponse;
+  try { forecastResponse = await fetch(forecastUrl, { signal: AbortSignal.timeout(timeoutMs) }); } catch { return []; }
   if (!forecastResponse.ok) return [];
   const forecast = await forecastResponse.json();
   const current = forecast.current || {};
@@ -83,7 +104,8 @@ async function fetchWeather(query, timeoutMs) {
   const date = daily.time?.[0] || current.time || '';
   const high = daily.temperature_2m_max?.[0];
   const low = daily.temperature_2m_min?.[0];
-  const snippet = `${location.name}${location.country ? `（${location.country}）` : ''} ${date}：${weatherName}，当前 ${current.temperature_2m ?? '未知'}°C，今日 ${low ?? '未知'}–${high ?? '未知'}°C，湿度 ${current.relative_humidity_2m ?? '未知'}%，风速 ${current.wind_speed_10m ?? '未知'} km/h。`;
+  if (current.temperature_2m == null && high == null && low == null) return [];
+  const snippet = `${location.name}${location.country ? `（${location.country}）` : ''} ${date}：${weatherName}，当前 ${current.temperature_2m ?? '未知'}°C，今日 ${low ?? '未知'}–${high ?? '未知'}°C，湿度 ${current.relative_humidity_2m ?? '未知'}%，风速 ${current.wind_speed_10m ?? '未知'} km/h。只能依据这些实时数据回答，不要补充未提供的天气描述。`;
   return [{ title: `${location.name}天气（Open-Meteo）`, snippet, url: 'https://open-meteo.com/' }];
 }
 
