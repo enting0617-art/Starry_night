@@ -416,6 +416,9 @@ app.post('/api/chat', async (request, response, next) => {
       assistantText += marker;
       response.write(`${JSON.stringify({ model, message: { role: 'assistant', content: marker }, done: false })}\n`);
     }
+    if (searchPlan.shouldSearch) {
+      response.write(`${JSON.stringify({ searchReferences: searchResults.map(({ title, url, snippet }) => ({ title, url, snippet })) })}\n`);
+    }
     response.end();
     const memorySafeAssistantText = assistantText
       .replace(/\s*\[\[EMOJI:\d+\]\]\s*/giu, '\n')
