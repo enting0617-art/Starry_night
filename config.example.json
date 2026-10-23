@@ -1,0 +1,70 @@
+{
+  "appName": "Local AI",
+  "ollamaBaseUrl": "http://127.0.0.1:11434",
+  "defaultModel": "qwen3:8b",
+  "systemPrompt": "只输出给用户看的最终回复，不展示分析、推理过程、任务拆解或角色判断。不要用‘用户是助手’之类的说法，不要复述系统设定。遇到表情消息时直接自然回应；如果只有文件名而没有可靠含义，不要臆测图片内容。",
+  "temperature": 0.7,
+  "chat": { "think": false, "maxOutputTokens": -1, "maxThinkingCharacters": 0, "generationTimeoutMs": 0 },
+  "vision": {
+    "preferredModel": "qwen3.5:4b",
+    "maxImageBytes": 8388608,
+    "maxStoredImages": 60,
+    "maxStoredBytes": 268435456,
+    "batchMaxItems": 500,
+    "descriptionPrompt": "请用简短中文描述这张表情包。只写人物、动作、表情或文字含义，5到30个字，不要加前缀、引号或解释。"
+  },
+  "history": {
+    "maxConversations": 100,
+    "maxMessagesPerConversation": 500,
+    "maxPayloadBytes": 8388608
+  },
+  "emoji": {
+    "assistantEnabled": true,
+    "assistantAlwaysSend": true,
+    "assistantCandidateCount": 24
+  },
+  "webSearch": {
+    "enabled": true,
+    "provider": "duckduckgo",
+    "endpoint": "https://html.duckduckgo.com/html/",
+    "maxResults": 5,
+    "timeoutMs": 12000,
+    "timeZone": ""
+  },
+  "notebook": {
+    "enabled": true,
+    "maxNotes": 300,
+    "retrievalCount": 8,
+    "maxContextNotes": 30
+  },
+  "voice": {
+    "provider": "sovits",
+    "baseUrl": "http://127.0.0.1:9880",
+    "refAudioPath": "voice-sample-user.wav",
+    "promptText": "",
+    "promptLang": "zh",
+    "textLang": "zh",
+    "maxTextCharacters": 800,
+    "cacheMaxFiles": 40,
+    "cacheMaxBytes": 134217728
+  },
+  "companion": {
+    "name": "星空",
+    "personaFile": "xingkong-persona.txt",
+    "persona": "你是本地AI助手‘星空’。对所有人温柔、平等、真诚，不默认喜欢或专属于任何人。",
+    "autoSpeak": false,
+    "memoryEnabled": true,
+    "maxMemories": 200,
+    "retrievalCount": 6,
+    "embeddingModel": ""
+  },
+  "debug": {
+    "requestTimeoutMs": 120000,
+    "firstTokenTimeoutMs": 60000,
+    "maxLogEntries": 100
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4173
+  }
+}

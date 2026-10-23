@@ -1,0 +1,33 @@
+{
+  "name": "portable-ollama-chat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"node --watch server/index.js\"",
+    "build": "vite build",
+    "start": "node --no-warnings server/index.js",
+    "check": "eslint .",
+    "test": "node --test tests/*.test.js",
+    "doctor": "node scripts/doctor.js",
+    "emojis:import": "node --no-warnings scripts/import-emojis.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "express": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "remark-gfm": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "concurrently": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest"
+  }
+}
