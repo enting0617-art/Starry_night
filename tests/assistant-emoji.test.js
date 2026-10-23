@@ -31,3 +31,7 @@ test('keeps a warm wave tone without triggering Markdown strikethrough', () => {
 test('hides private notebook commands from the visible reply', () => {
   assert.equal(sanitizeAssistantContent('我会记住的。\n[[NOTE:identity|用户叫星空之夜]]\n[[EMOJI:12]]'), '我会记住的。');
 });
+
+test('hides private task checkpoints from the visible reply', () => {
+  assert.equal(sanitizeAssistantContent('正在继续做。\n[[TASK_UPDATE:active|已完成资料整理|开始写实现]]\n[[EMOJI:12]]'), '正在继续做。');
+});

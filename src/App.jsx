@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Bot, Brain, Bug, ChevronDown, CircleStop, Globe2, ImagePlus, Images, Menu, MessageSquarePlus, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, ChevronDown, CircleStop, Globe2, ImagePlus, Images, ListTodo, Menu, MessageSquarePlus, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
 import CompanionAvatar from './CompanionAvatar.jsx';
 import VisionPanel from './VisionPanel.jsx';
+import TaskPanel from './TaskPanel.jsx';
 import { findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
 
 const STORAGE_KEY = 'portable-ollama-chat:v1';
@@ -541,6 +542,7 @@ export default function App() {
         </div>
         <div className="sidebar-tools">
           <button className={`admin-link ${view === 'vision' ? 'active' : ''}`} onClick={() => setView(view === 'vision' ? 'chat' : 'vision')}><Images size={17} /><span>{view === 'vision' ? '返回聊天' : '图像与表情'}</span></button>
+          <button className={`admin-link ${view === 'tasks' ? 'active' : ''}`} onClick={() => setView(view === 'tasks' ? 'chat' : 'tasks')}><ListTodo size={17} /><span>{view === 'tasks' ? '返回聊天' : '任务工作台'}</span></button>
           <button className={`admin-link ${view === 'debug' ? 'active' : ''}`} onClick={() => setView(view === 'debug' ? 'chat' : 'debug')}><Bug size={17} /><span>{view === 'debug' ? '返回聊天' : '后台调试'}</span></button>
         </div>
       </aside>
@@ -582,7 +584,7 @@ export default function App() {
           </section></div>
         )}
 
-        {view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : <><section className="conversation">
+        {view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
           {!active?.messages.length ? (
             <div className="welcome">
               <CompanionAvatar state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} />

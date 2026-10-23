@@ -18,6 +18,7 @@ import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
 import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/searxng-control.js';
 import { buildShortTermContext } from './context-memory.js';
 import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
+import { applyTaskUpdates, createTask, getActiveTaskContext, listTasks, updateTask } from './task-store.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -117,6 +118,19 @@ app.patch('/api/notebook/:id', async (request, response, next) => {
 app.get('/api/companion/preferences', (_request, response) => response.json(getCompanionPreferences()));
 
 app.put('/api/companion/preferences', (request, response) => response.json(updateCompanionPreferences(request.body || {})));
+
+app.get('/api/tasks', (request, response) => response.json({ tasks: listTasks(request.query.conversationId) }));
+
+app.post('/api/tasks', (request, response, next) => {
+  try { response.status(201).json({ task: createTask(request.body || {}) }); } catch (error) { next(error); }
+});
+
+app.patch('/api/tasks/:id', (request, response, next) => {
+  try {
+    const task = updateTask(request.params.id, request.body || {});
+    response.status(task ? 200 : 404).json({ task });
+  } catch (error) { next(error); }
+});
 
 app.post('/api/companion/proactive/check', async (request, response, next) => {
   try {
@@ -434,7 +448,11 @@ app.post('/api/chat', async (request, response, next) => {
     const clockContext = `后台本机时钟：${localClock}（时区：${config.webSearch.timeZone}；UTC：${now.toISOString()}）。用户询问当前时间或日期时，直接依据这里回答，并明确时区；不要改成北京时间，除非用户明确询问北京时间。不要主动声称可以设置提醒，因为当前平台没有提醒工具。`;
     const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(latestUserText, config.emoji.assistantCandidateCount) : [];
     const emojiContext = emojiCandidates.length ? `${config.emoji.assistantAlwaysSend ? '每一条正常回复都必须从候选列表选择一张真实表情包，不能省略。' : '仅在确实适合当前语气时选择一张表情包。'}只能从下面列表选择一个，并在完整正文全部结束后另起最后一行写 [[EMOJI:序号]]，标记后绝对不能再写任何文字。每次恰好一个，不得编造序号。禁止使用 Unicode 绘文字或“小黄豆”表情，例如笑脸、月亮、爱心等字符；情绪只能通过本地表情包表达。只有实际输出了有效标记时才能在正文中说自己发送了表情。正文中禁止书写“星空发送的表情含义”“助手发送的表情含义”等说明，禁止自己描述、假设或创造列表之外的表情，禁止输出表情图片链接或 Markdown 图片；界面会根据真实序号显示图片。\n可用表情：\n${emojiCandidates.map((item) => `- ${item.id}: ${item.description}`).join('\n')}` : '';
-    const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
+    const activeTask = getActiveTaskContext(conversationId);
+    const taskContext = activeTask
+      ? `当前有一项持续任务。目标：${activeTask.goal}\n当前状态：${activeTask.currentState || '尚未写入'}\n下一步：${activeTask.nextStep || '尚未写入'}\n请围绕任务给出真实进展；完成、遇到阻塞或产生明确下一步时，在正文结束、表情标记之前另起一行输出 [[TASK_UPDATE:active|简短当前状态|下一步]]。状态只能是 active、blocked 或 done。该标记不会显示给用户。不要把闲聊强行变成任务，也不要虚构执行过的操作。`
+      : '';
+    const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, taskContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
     const shortTerm = buildShortTermContext({ conversationId, messages });
     const shortTermContext = shortTerm.summary
       ? `本次对话较早部分的压缩摘要（仅用于保持上下文，不要提及此摘要）：\n${shortTerm.summary}`
@@ -532,9 +550,11 @@ app.post('/api/chat', async (request, response, next) => {
     const memorySafeAssistantText = assistantText
       .replace(/\s*\[\[EMOJI:\d+\]\]\s*/giu, '\n')
       .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
+      .replace(/\s*\[\[TASK_UPDATE:(?:active|blocked|done)\|[^|\]\r\n]*\|[^\]\r\n]*\]\]\s*/giu, '\n')
       .replace(/^\s*(?:星空|助手|AI)发送的表情(?:包)?含义[:：].*$/gimu, '')
       .trim();
     if (config.notebook.enabled && !searchPlan.shouldSearch) void applyNotebookCommands(assistantText).catch((error) => console.warn(`Notebook update skipped: ${error.message}`));
+    if (activeTask) void Promise.resolve().then(() => applyTaskUpdates(conversationId, assistantText)).catch((error) => console.warn(`Task update skipped: ${error.message}`));
     if (memorySafeAssistantText && !searchPlan.shouldSearch) void extractAndSaveMemories({ userText: latestUserText, assistantText: memorySafeAssistantText, model, config });
   } catch (error) {
     if (clientDisconnected) return;

@@ -5,6 +5,7 @@ export function sanitizeAssistantContent(text, { preserveEmojiMarkers = false } 
     // Markdown interprets paired ASCII tildes as strikethrough. Full-width waves preserve the tone safely.
     .replace(/~{2,}/gu, (match) => '～'.repeat(match.length))
     .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
+    .replace(/\s*\[\[TASK_UPDATE:(?:active|blocked|done)\|[^|\]\r\n]*\|[^\]\r\n]*\]\]\s*/giu, '\n')
     .replace(/\p{Extended_Pictographic}(?:[\uFE0E\uFE0F])?(?:\u200D\p{Extended_Pictographic}(?:[\uFE0E\uFE0F])?)*/gu, '')
     .replace(/[\uFE0E\uFE0F]/gu, '')
     .replace(/^\s*(?:星空|助手|AI)发送的表情(?:包)?含义[:：].*$/gimu, '')
