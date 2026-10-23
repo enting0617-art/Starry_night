@@ -1,14 +1,13 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Starry_night - Docker Desktop 启动器
+title Starry_night - Docker Desktop Launcher
 
-:: Docker Desktop 的 WSL 后端有时需要管理员权限才能正常启动。
-:: 首次运行会通过 UAC 重新以管理员身份启动本脚本。
+REM Uses ASCII only: cmd.exe can safely run this file under any Windows code page.
 for /f %%A in ('powershell -NoProfile -Command "([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"') do set "IS_ADMIN=%%A"
 if /I not "!IS_ADMIN!"=="True" (
-  echo 正在请求管理员授权以启动 Docker Desktop...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-  if errorlevel 1 echo 未获得管理员授权，Docker Desktop 未启动。
+  echo Requesting administrator approval for Docker Desktop...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c ""%~f0""' -Verb RunAs"
+  if errorlevel 1 echo Administrator approval was not granted. Docker Desktop was not started.
   exit /b
 )
 
@@ -20,16 +19,15 @@ for %%P in (
 
 if not defined DOCKER_DESKTOP (
   echo.
-  echo 未找到 Docker Desktop。请先完成 Docker Desktop 安装。
-  echo 安装完成后，再双击此文件即可。
+  echo Docker Desktop was not found. Install Docker Desktop, then run this file again.
   pause
   exit /b 1
 )
 
-echo 正在启动 Docker Desktop...
+echo Starting Docker Desktop...
 start "Docker Desktop" "%DOCKER_DESKTOP%"
 
-echo 等待 Docker 引擎就绪，最多约 90 秒...
+echo Waiting for the Docker engine. This can take up to 90 seconds...
 set /a ATTEMPTS=0
 :wait_for_docker
 docker version --format "{{.Server.Version}}" >nul 2>&1
@@ -41,14 +39,14 @@ goto wait_for_docker
 
 :docker_ready
 echo.
-echo Docker 引擎已启动，可以回到星空的“调试 - SearXNG 本地搜索”控制面板继续操作。
+echo Docker engine is ready. Return to Starry_night and open the SearXNG control panel.
 docker version --format "Docker Server: {{.Server.Version}}"
 pause
 exit /b 0
 
 :docker_failed
 echo.
-echo Docker Desktop 已尝试启动，但引擎在 90 秒内仍不可用。
-echo 请打开 Docker Desktop 查看提示；若显示 WSL 错误，请先重启电脑后再次运行本文件。
+echo Docker Desktop was started, but the engine was unavailable after 90 seconds.
+echo Open Docker Desktop to see its error message. If it reports a WSL error, restart Windows and run this file again.
 pause
 exit /b 1
