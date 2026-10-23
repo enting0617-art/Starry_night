@@ -32,6 +32,7 @@
     "timeZone": "America/Denver"
   },
   "search": {
+    "agentEnabled": false,
     "cacheSearchTtlMs": 600000,
     "cacheWikiTtlMs": 21600000,
     "cachePageTtlMs": 1800000

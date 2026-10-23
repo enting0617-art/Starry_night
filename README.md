@@ -124,9 +124,14 @@ docker compose -f .\docker-compose.search.yml up -d
   "webSearch": {
     "provider": "searxng",
     "endpoint": "http://127.0.0.1:8888"
+  },
+  "search": {
+    "agentEnabled": true
   }
 }
 ```
+
+启用工具循环前，建议将聊天模型切换为已验证支持 Tools 的 `qwen3.5:9b`。启用后，星空会先让本地模型在最多 4 轮、最多 8 次调用内决定是否执行 `web_search`、`wiki_search` 和 `read_url`，再把实际来源交给最终流式回答。任一工具不可用时会自动回退到原有搜索路径。
 
 可用的本地工具接口包括 `POST /api/search-tools/web_search`、`POST /api/search-tools/wiki_search`、`POST /api/search-tools/read_url` 与 `GET /api/search-tools/health`。网页读取会拒绝 localhost、私网地址和 robots.txt 禁止的路径，搜索缓存仅保存在 `data/search-cache.json`，不会进入长期记忆。
 

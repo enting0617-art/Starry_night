@@ -102,6 +102,7 @@ export async function loadConfig() {
       timeZone: config.webSearch?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     },
     search: {
+      agentEnabled: config.search?.agentEnabled === true,
       cacheSearchTtlMs: Number(config.search?.cacheSearchTtlMs || 600000),
       cacheWikiTtlMs: Number(config.search?.cacheWikiTtlMs || 21600000),
       cachePageTtlMs: Number(config.search?.cachePageTtlMs || 1800000),
@@ -171,7 +172,10 @@ export function validateConfig(config) {
   } catch { errors.push('webSearch.endpoint 不是有效 URL'); }
   if (!Number.isInteger(config.webSearch.maxResults) || config.webSearch.maxResults < 1 || config.webSearch.maxResults > 10) errors.push('webSearch.maxResults 必须是 1-10 的整数');
   if (!Number.isInteger(config.webSearch.timeoutMs) || config.webSearch.timeoutMs < 2000 || config.webSearch.timeoutMs > 60000) errors.push('webSearch.timeoutMs 必须是 2000-60000 的整数');
-  for (const [name, value] of Object.entries(config.search)) if (!Number.isInteger(value) || value < 10000 || value > 604800000) errors.push(`search.${name} 必须是 10000-604800000 的整数`);
+  for (const name of ['cacheSearchTtlMs', 'cacheWikiTtlMs', 'cachePageTtlMs']) {
+    const value = config.search[name];
+    if (!Number.isInteger(value) || value < 10000 || value > 604800000) errors.push(`search.${name} 必须是 10000-604800000 的整数`);
+  }
   try { new Intl.DateTimeFormat('zh-CN', { timeZone: config.webSearch.timeZone }).format(new Date()); } catch { errors.push('webSearch.timeZone 不是有效时区'); }
   if (!Number.isInteger(config.notebook.maxNotes) || config.notebook.maxNotes < 10 || config.notebook.maxNotes > 5000) errors.push('notebook.maxNotes 必须是 10-5000 的整数');
   if (!Number.isInteger(config.notebook.retrievalCount) || config.notebook.retrievalCount < 1 || config.notebook.retrievalCount > 50) errors.push('notebook.retrievalCount 必须是 1-50 的整数');
