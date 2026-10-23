@@ -31,6 +31,11 @@
     "timeoutMs": 12000,
     "timeZone": "America/Denver"
   },
+  "search": {
+    "cacheSearchTtlMs": 600000,
+    "cacheWikiTtlMs": 21600000,
+    "cachePageTtlMs": 1800000
+  },
   "notebook": {
     "enabled": true,
     "maxNotes": 300,

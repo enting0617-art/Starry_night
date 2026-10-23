@@ -1,0 +1,16 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Starry_night Local Search"
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  # 首次启动前请替换成随机 64 位十六进制字符串。
+  secret_key: "CHANGE_ME_TO_A_RANDOM_SECRET_BEFORE_STARTING"

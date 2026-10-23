@@ -109,6 +109,27 @@ npm run emojis:import
 
 搜索结果会作为不可信参考资料交给模型，并要求模型给出来源。联网搜索会把搜索关键词发送给外部搜索服务，这是本项目默认情况下少数会离开本机的数据。
 
+### 可选本地 AI 搜索底座
+
+项目新增了可选的 SearXNG 搜索工具层，提供本地缓存、Wikipedia 查询、网页正文提取、robots.txt 检查和 SSRF 防护。它默认不会替换现有 DuckDuckGo 搜索；确认 Docker 可用后，才按以下方式启用：
+
+```powershell
+docker compose -f .\docker-compose.search.yml up -d
+```
+
+首次启动前，请将 `searxng/settings.yml` 中的 `secret_key` 替换为随机字符串。随后在 `config.local.json` 写入：
+
+```json
+{
+  "webSearch": {
+    "provider": "searxng",
+    "endpoint": "http://127.0.0.1:8888"
+  }
+}
+```
+
+可用的本地工具接口包括 `POST /api/search-tools/web_search`、`POST /api/search-tools/wiki_search`、`POST /api/search-tools/read_url` 与 `GET /api/search-tools/health`。网页读取会拒绝 localhost、私网地址和 robots.txt 禁止的路径，搜索缓存仅保存在 `data/search-cache.json`，不会进入长期记忆。
+
 ### 语音
 
 语音默认采用“生成后手动点击播放”的模式，避免切换到下一条消息后仍继续播报。每条 AI 消息下面都有“听语音”按钮。

@@ -14,9 +14,11 @@ import { getVisionBatchStatus, listVisionModels, startVisionBatch, stopVisionBat
 import { loadConversations, saveConversations } from './conversation-db.js';
 import { planWebSearch, searchWeb } from './web-search.js';
 import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote } from './notebook.js';
+import { createSearchRouter } from './search/search-tools.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
+app.use('/api/search-tools', createSearchRouter());
 
 const requestLog = [];
 app.use(async (request, response, next) => {

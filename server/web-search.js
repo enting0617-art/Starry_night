@@ -1,4 +1,5 @@
 import { loadConfig } from './config.js';
+import { webSearch as searchSearxng } from './search/search-tools.js';
 
 function decodeHtml(value) {
   const entities = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' };
@@ -34,6 +35,7 @@ export async function searchWeb(query) {
     if (weather.length) return weather;
     return [];
   }
+  if (config.webSearch.provider === 'searxng') return searchSearxng(safeQuery, config.webSearch.maxResults);
   const url = new URL(config.webSearch.endpoint);
   url.searchParams.set('q', safeQuery);
   const response = await fetch(url, {
