@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Brain, Bug, ChevronDown, CircleStop, Globe2, ImagePlus, Images, Menu, MessageSquarePlus, PanelLeftClose, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, ChevronDown, CircleStop, Globe2, ImagePlus, Images, Menu, MessageSquarePlus, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
@@ -11,6 +11,10 @@ const STORAGE_KEY = 'portable-ollama-chat:v1';
 
 function uid() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+}
+
+function timestamp() {
+  return Date.now();
 }
 
 function sanitizeConversations(conversations) {
@@ -68,6 +72,8 @@ export default function App() {
   const [historyReady, setHistoryReady] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => localStorage.getItem('xingkong:web-search') === 'true');
+  const [proactive, setProactive] = useState({ enabled: false, idleMinutes: 180, checkSeconds: 60 });
+  const [proactiveStatus, setProactiveStatus] = useState('');
   const abortRef = useRef(null);
   const audioRef = useRef(null);
   const audioUrlRef = useRef(null);
@@ -77,8 +83,11 @@ export default function App() {
   const imageInputRef = useRef(null);
   const historySaveTimerRef = useRef(null);
   const historySnapshotRef = useRef({ conversations: initial.conversations, activeId: initial.activeId });
+  const proactiveCheckingRef = useRef(false);
 
   const active = conversations.find((item) => item.id === activeId) || conversations[0];
+  const activeConversationId = active?.id;
+  const activeUpdatedAt = active?.updatedAt;
 
   useEffect(() => {
     let cancelled = false;
@@ -159,19 +168,21 @@ export default function App() {
   const refreshModels = useCallback(async () => {
     setStatus({ loading: true, message: '正在连接 Ollama…', ok: false });
     try {
-      const [configResponse, modelResponse, memoryResponse, emojiResponse, visionResponse, notebookResponse] = await Promise.all([fetch('/api/config'), fetch('/api/models'), fetch('/api/memories'), fetch('/api/emojis?limit=500'), fetch('/api/vision/models'), fetch('/api/notebook')]);
+      const [configResponse, modelResponse, memoryResponse, emojiResponse, visionResponse, notebookResponse, proactiveResponse] = await Promise.all([fetch('/api/config'), fetch('/api/models'), fetch('/api/memories'), fetch('/api/emojis?limit=500'), fetch('/api/vision/models'), fetch('/api/notebook'), fetch('/api/companion/preferences')]);
       const appConfig = await configResponse.json();
       const modelData = await modelResponse.json();
       const memoryData = await memoryResponse.json();
       const emojiData = await emojiResponse.json();
       const visionData = await visionResponse.json().catch(() => ({ models: [] }));
       const notebookData = await notebookResponse.json().catch(() => ({ notes: [] }));
+      const proactiveData = await proactiveResponse.json().catch(() => null);
       if (!configResponse.ok) throw new Error(appConfig.error);
       if (!modelResponse.ok) throw new Error(modelData.error);
       const available = modelData.models || [];
       setConfig(appConfig);
       setMemories(memoryData.memories || []);
       setNotebookNotes(notebookData.notes || []);
+      if (proactiveData) setProactive(proactiveData);
       setEmojis(emojiData.emojis || []);
       setVisionModels(visionResponse.ok ? visionData.models || [] : []);
       setModels(available);
@@ -317,6 +328,73 @@ export default function App() {
     if (response.ok) setNotebookNotes((items) => items.filter((item) => item.id !== id));
   }
 
+  async function removeMemoryEntry(id) {
+    const response = await fetch(`/api/memories/${id}`, { method: 'DELETE' });
+    if (response.ok) setMemories((items) => items.filter((item) => item.id !== id));
+  }
+
+  async function updateNotebookEntry(item) {
+    const text = window.prompt('编辑星空的笔记：', item.text);
+    if (text === null) return;
+    const response = await fetch(`/api/notebook/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) setNotebookNotes((items) => items.map((entry) => entry.id === item.id ? data.note : entry));
+  }
+
+  async function toggleNotebookPin(item) {
+    const response = await fetch(`/api/notebook/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: !item.pinned }) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) setNotebookNotes((items) => items.map((entry) => entry.id === item.id ? data.note : entry));
+  }
+
+  async function updateMemoryEntry(item) {
+    const text = window.prompt('编辑这条长期记忆：', item.text);
+    if (text === null) return;
+    const response = await fetch(`/api/memories/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) setMemories((items) => items.map((entry) => entry.id === item.id ? data.memory : entry));
+    else setHistoryError(data.error || '保存记忆失败');
+  }
+
+  async function toggleMemoryPin(item) {
+    const response = await fetch(`/api/memories/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: !item.pinned }) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) setMemories((items) => items.map((entry) => entry.id === item.id ? data.memory : entry));
+  }
+
+  async function updateProactive(changes) {
+    const response = await fetch('/api/companion/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+    const data = await response.json().catch(() => null);
+    if (response.ok && data) { setProactive(data); setProactiveStatus(data.enabled ? `已开启：空闲 ${data.idleMinutes} 分钟后，星空最多主动联系一次，直到你再次说话。` : '已关闭主动联系。'); }
+    else setProactiveStatus('主动联系设置保存失败。');
+  }
+
+  useEffect(() => {
+    if (!historyReady || !activeConversationId || !model || generating || !proactive.enabled) return undefined;
+    let cancelled = false;
+    const check = async () => {
+      if (cancelled || proactiveCheckingRef.current) return;
+      proactiveCheckingRef.current = true;
+      try {
+        const response = await fetch('/api/companion/proactive/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: activeConversationId, model }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled || !data.due || !Array.isArray(data.messages)) return;
+        const now = Date.now();
+        const additions = data.messages.map((content, index) => {
+          const emoji = findSelectedAssistantEmoji(content, emojis);
+          return { id: uid(), role: 'assistant', content: sanitizeAssistantContent(content), emojiId: emoji?.id || null, emojiDescription: emoji?.description || null, model, proactive: true, createdAt: now + index };
+        });
+        updateConversation(activeConversationId, (conversation) => ({ ...conversation, messages: [...conversation.messages, ...additions], updatedAt: timestamp() }));
+        setProactiveStatus('星空刚刚主动留下了一条消息。');
+      } catch {
+        // A background companion check should never interrupt normal chatting.
+      } finally { proactiveCheckingRef.current = false; }
+    };
+    const initialTimer = setTimeout(check, 1200);
+    const timer = setInterval(check, Math.max(30, proactive.checkSeconds || 60) * 1000);
+    return () => { cancelled = true; clearTimeout(initialTimer); clearInterval(timer); };
+  }, [activeConversationId, activeUpdatedAt, emojis, generating, historyReady, model, proactive.enabled, proactive.checkSeconds]);
+
   async function submit(event) {
     event?.preventDefault();
     const typedContent = input.trim();
@@ -327,8 +405,9 @@ export default function App() {
     if (selectedImage && !visualModel) { setImageError('没有检测到支持图像的 Ollama 模型。'); return; }
 
     const conversationId = active.id;
-    const userMessage = { id: uid(), role: 'user', content, emojiId: selectedEmoji?.id || null, emojiDescription: selectedEmoji?.description || null, imageId: selectedImage?.id || null, imageName: selectedImage?.name || null };
-    const assistantMessage = { id: uid(), role: 'assistant', content: '', model: visualModel };
+    const messageCreatedAt = timestamp();
+    const userMessage = { id: uid(), role: 'user', content, emojiId: selectedEmoji?.id || null, emojiDescription: selectedEmoji?.description || null, imageId: selectedImage?.id || null, imageName: selectedImage?.name || null, createdAt: messageCreatedAt };
+    const assistantMessage = { id: uid(), role: 'assistant', content: '', model: visualModel, createdAt: messageCreatedAt };
     const requestMessages = [...active.messages, userMessage].filter((message) => !message.interrupted && (message.role !== 'assistant' || !/^(（已停止生成）|连接失败：|生成失败：)/.test(message.content))).map(({ role, content: text, emojiDescription, imageId }) => ({ role, content: role === 'user' && emojiDescription ? `${text}\n用户发送的表情含义：${emojiDescription}` : text, imageIds: imageId ? [imageId] : undefined }));
     setInput('');
     setSelectedEmoji(null);
@@ -490,13 +569,14 @@ export default function App() {
             <label>朗读声源<select value={voiceProvider} onChange={(event) => { stopVoice(); setVoiceError(''); setVoiceProvider(event.target.value); }}><option value="browser">浏览器语音</option><option value="sovits">本地 GPT-SoVITS</option></select></label>
             <label className="auto-speak-setting"><input type="checkbox" checked={autoSpeak} onChange={toggleAutoSpeak} />自动播报新回复</label>
             <label className="auto-speak-setting"><input type="checkbox" checked={webSearchEnabled} onChange={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} />智能联网搜索</label>
+            <div className="proactive-setting"><div><BellRing size={17} /><span><strong>主动陪伴</strong><small>仅在这个网页打开时运行；每轮对话最多主动联系一次。</small></span></div><label className="auto-speak-setting"><input type="checkbox" checked={proactive.enabled} onChange={(event) => updateProactive({ enabled: event.target.checked })} />允许星空在你一段时间没说话后主动发消息</label><label>空闲多久后联系<input type="number" min="15" max="1440" value={proactive.idleMinutes} disabled={!proactive.enabled} onChange={(event) => updateProactive({ idleMinutes: Number(event.target.value) })} /> 分钟</label>{proactiveStatus && <small>{proactiveStatus}</small>}</div>
             <span>默认关闭。开启后，星空会自动搜索需要核验的内容；你说“查一下”“继续查”时，她会结合前文直接提取主题，不再反问搜索方向。搜索后会附可展开的参考资料。时间读取本机 {config.webSearch?.timeZone || '当前'} 时区。</span>
             <span>自动播报默认关闭。你可以点击每条回复下面的“听语音”；同一时间只播放一条，发送新消息会停止当前语音。</span>
             {voiceError && <span role="alert">{voiceError}</span>}
             {historyError && <span role="alert">{historyError}</span>}
-            <div className="memory-summary"><Brain size={17} /><div><strong>长期记忆</strong><span>{memories.length} 条已保存 · 位于 data/memories.json</span></div></div>
+            <details className="notebook-summary"><summary><Brain size={17} /><span><strong>长期记忆</strong><small>{memories.length} 条 · 可编辑、固定或删除</small></span></summary><div className="notebook-entries">{memories.length ? memories.map((memory) => <div key={memory.id}><span><b>{memory.pinned ? '固定' : '记忆'}</b>{memory.text}</span><aside><button type="button" onClick={() => toggleMemoryPin(memory)} aria-label="固定记忆"><Pin size={13} /></button><button type="button" onClick={() => updateMemoryEntry(memory)} aria-label="编辑记忆"><Pencil size={13} /></button><button type="button" onClick={() => removeMemoryEntry(memory.id)} aria-label="删除记忆"><Trash2 size={13} /></button></aside></div>) : <p>还没有保存的长期记忆。</p>}</div></details>
             <div className="memory-summary"><MessageSquarePlus size={17} /><div><strong>聊天记录</strong><span>{historyError ? '等待写入本地数据库' : '已保存到 data/chat.sqlite，可随文件夹移动'}</span></div></div>
-            <details className="notebook-summary"><summary><Brain size={17} /><span><strong>星空的沙箱笔记</strong><small>{notebookNotes.length} 条 · data/xingkong-notes.json</small></span></summary><div className="notebook-entries">{notebookNotes.length ? notebookNotes.map((note) => <div key={note.id}><span><b>{note.pinned ? '固定' : note.category}</b>{note.text}</span><button type="button" onClick={() => removeNotebookEntry(note.id)} aria-label="删除笔记"><Trash2 size={13} /></button></div>) : <p>星空还没有写下笔记。</p>}</div></details>
+            <details className="notebook-summary"><summary><Brain size={17} /><span><strong>星空的成长档案</strong><small>{notebookNotes.length} 条 · 她自主记录的共同约定与长期事项</small></span></summary><div className="notebook-entries">{notebookNotes.length ? notebookNotes.map((note) => <div key={note.id}><span><b>{note.pinned ? '固定' : note.category}</b>{note.text}</span><aside><button type="button" onClick={() => toggleNotebookPin(note)} aria-label="固定笔记"><Pin size={13} /></button><button type="button" onClick={() => updateNotebookEntry(note)} aria-label="编辑笔记"><Pencil size={13} /></button><button type="button" onClick={() => removeNotebookEntry(note.id)} aria-label="删除笔记"><Trash2 size={13} /></button></aside></div>) : <p>星空还没有写下成长档案。</p>}</div></details>
             <button className="secondary-button" onClick={refreshModels}>重新检测模型</button>
           </section>
         )}

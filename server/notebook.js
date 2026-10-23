@@ -124,3 +124,19 @@ export async function removeNotebookNote(id) {
   await saveNotes(filtered);
   return true;
 }
+
+export async function updateNotebookNote(id, changes = {}) {
+  const notes = await readNotes();
+  const note = notes.find((item) => item.id === id);
+  if (!note) return null;
+  if (Object.hasOwn(changes, 'text')) {
+    const text = safeText(changes.text);
+    if (!text) throw new Error('笔记内容无效或包含不应保存的敏感信息。');
+    note.text = text;
+  }
+  if (Object.hasOwn(changes, 'pinned')) note.pinned = Boolean(changes.pinned);
+  if (Object.hasOwn(changes, 'category') && categories.has(String(changes.category))) note.category = String(changes.category);
+  note.updatedAt = new Date().toISOString();
+  await saveNotes(notes);
+  return note;
+}

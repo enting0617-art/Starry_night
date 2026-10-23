@@ -115,6 +115,21 @@ export async function removeMemory(id) {
   return true;
 }
 
+export async function updateMemory(id, changes = {}) {
+  const memories = await readMemories();
+  const memory = memories.find((item) => item.id === id);
+  if (!memory) return null;
+  if (Object.hasOwn(changes, 'text')) {
+    const text = String(changes.text || '').replace(/\s+/g, ' ').trim();
+    if (!isUsableMemory({ text })) throw new Error('记忆内容需要是 2 至 240 个字的稳定事实。');
+    memory.text = text;
+  }
+  if (Object.hasOwn(changes, 'pinned')) memory.pinned = Boolean(changes.pinned);
+  memory.updatedAt = new Date().toISOString();
+  await saveMemories(memories);
+  return withoutEmbedding(memory);
+}
+
 export async function extractAndSaveMemories({ userText, assistantText, model, config }) {
   if (!config.companion.memoryEnabled || !userText || !assistantText) return;
   try {

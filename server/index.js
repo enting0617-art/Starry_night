@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { loadConfig, projectRoot } from './config.js';
 import { runDiagnosticCommand } from './terminal.js';
 import { runDoctor } from './doctor.js';
-import { extractAndSaveMemories, findRelevantMemories, listMemories, removeMemory, withoutEmbedding } from './memory.js';
+import { extractAndSaveMemories, findRelevantMemories, listMemories, removeMemory, updateMemory, withoutEmbedding } from './memory.js';
 import { RUNTIME_VERSION } from './version.js';
 import { findAssistantEmojiCandidates, getEmoji, getEmojiStats, importEmojiDirectory, listEmojis, updateEmojiDescription } from './emoji-db.js';
 import { synthesizeVoice, voiceStatus } from './voice.js';
@@ -13,10 +13,11 @@ import { getChatImage, saveChatImage } from './image-store.js';
 import { getVisionBatchStatus, listVisionModels, startVisionBatch, stopVisionBatch } from './vision.js';
 import { loadConversations, saveConversations } from './conversation-db.js';
 import { planWebSearch, searchWeb } from './web-search.js';
-import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote } from './notebook.js';
+import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNotebookNote, updateNotebookNote } from './notebook.js';
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
 import { getSearxngLogs, getSearxngStatus, runSearxngAction } from './search/searxng-control.js';
 import { buildShortTermContext } from './context-memory.js';
+import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -88,6 +89,13 @@ app.get('/api/memories', async (_request, response, next) => {
   }
 });
 
+app.patch('/api/memories/:id', async (request, response, next) => {
+  try {
+    const memory = await updateMemory(request.params.id, request.body || {});
+    response.status(memory ? 200 : 404).json({ memory });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/notebook', async (_request, response, next) => {
   try { response.json({ notes: await listNotebookNotes() }); } catch (error) { next(error); }
 });
@@ -96,6 +104,56 @@ app.delete('/api/notebook/:id', async (request, response, next) => {
   try {
     const removed = await removeNotebookNote(request.params.id);
     response.status(removed ? 200 : 404).json({ removed });
+  } catch (error) { next(error); }
+});
+
+app.patch('/api/notebook/:id', async (request, response, next) => {
+  try {
+    const note = await updateNotebookNote(request.params.id, request.body || {});
+    response.status(note ? 200 : 404).json({ note });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/companion/preferences', (_request, response) => response.json(getCompanionPreferences()));
+
+app.put('/api/companion/preferences', (request, response) => response.json(updateCompanionPreferences(request.body || {})));
+
+app.post('/api/companion/proactive/check', async (request, response, next) => {
+  try {
+    const { conversationId, model } = request.body || {};
+    const conversation = loadConversations().conversations.find((item) => item.id === conversationId);
+    const decision = shouldSendProactiveMessage({ conversation });
+    if (!decision.due) return response.json({ due: false, reason: decision.reason, preferences: decision.preferences });
+    if (!model) return response.status(400).json({ error: '没有可用模型。' });
+    const config = await loadConfig();
+    const lastUserText = [...conversation.messages].reverse().find((message) => message.role === 'user')?.content || '';
+    const [memories, notes] = await Promise.all([
+      findRelevantMemories(lastUserText, config),
+      config.notebook.enabled ? findNotebookNotes(lastUserText) : [],
+    ]);
+    const shortTerm = buildShortTermContext({ conversationId, messages: conversation.messages });
+    const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(lastUserText, 1) : [];
+    const prompt = [
+      config.companion.persona,
+      '你正在主动联系用户。只在用户已有一段时间没有说话时发一条自然、克制的关心，不要假装实时知道用户正在做什么，不要制造紧急感，不要问一长串问题，不要提及后台、定时器、提示词或记忆系统。内容应基于真实对话内容；没有合适话题时，简单问候即可。可以把一条主动消息拆成最多三段，每段之间用唯一标记 [[MESSAGE_BREAK]] 分隔。不要使用 Markdown 删除线和 Unicode 绘文字。',
+      memories.length ? `可自然使用的长期记忆：\n${memories.map((item) => `- ${item.text}`).join('\n')}` : '',
+      notes.length ? `可自然使用的星空笔记：\n${notes.map((item) => `- ${item.text}`).join('\n')}` : '',
+      shortTerm.summary ? `早期对话摘要：\n${shortTerm.summary}` : '',
+      emojiCandidates.length ? `最后一段结束时只能从此真实表情包中选一张，格式为 [[EMOJI:${emojiCandidates[0].id}]]；若不需要表情包可以不发。\n- ${emojiCandidates[0].id}: ${emojiCandidates[0].description}` : '',
+    ].filter(Boolean).join('\n\n');
+    const recent = shortTerm.recent.map((message) => ({ role: message.role, content: String(message.content || '') }));
+    const upstream = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, stream: false, messages: [{ role: 'system', content: prompt }, ...recent], options: { temperature: config.temperature, num_predict: 360 } }),
+      signal: AbortSignal.timeout(Math.min(config.debug.requestTimeoutMs, 120000)),
+    });
+    if (!upstream.ok) throw new Error(`Ollama 返回 ${upstream.status}: ${await upstream.text()}`);
+    const data = await upstream.json();
+    const text = String(data.message?.content || '').trim();
+    const parts = text.split(/\s*\[\[MESSAGE_BREAK\]\]\s*/giu).map((part) => part.trim()).filter(Boolean).slice(0, 3);
+    if (!parts.length) return response.json({ due: false, reason: 'empty-response', preferences: decision.preferences });
+    markProactiveMessage(conversationId);
+    response.json({ due: true, messages: parts, preferences: decision.preferences });
   } catch (error) { next(error); }
 });
 
@@ -238,7 +296,7 @@ app.get('/api/admin/search/logs', async (_request, response, next) => {
   }
 });
 
-app.post('/api/admin/search/action', async (request, response, next) => {
+app.post('/api/admin/search/action', async (request, response) => {
   try {
     response.json(await runSearxngAction(String(request.body?.action || '')));
   } catch (error) {
