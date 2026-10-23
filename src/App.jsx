@@ -562,8 +562,9 @@ export default function App() {
         </header>
 
         {settingsOpen && view === 'chat' && (
-          <section className="settings-card">
-            <div><strong>运行配置</strong><span>这些默认值来自 config.json</span></div>
+          <div className="settings-window-backdrop" onMouseDown={() => setSettingsOpen(false)}>
+          <section className="settings-card" role="dialog" aria-modal="true" aria-label="运行配置设置" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="settings-window-title"><div><strong>运行配置设置</strong><span>本地运行、陪伴方式与数据管理</span></div><button type="button" className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭运行配置设置"><X size={18} /></button></header>
             <label>系统提示词<textarea value={config.systemPrompt} onChange={(event) => setConfig((value) => ({ ...value, systemPrompt: event.target.value }))} /></label>
             <label>温度：{config.temperature}<input type="range" min="0" max="2" step="0.1" value={config.temperature} onChange={(event) => setConfig((value) => ({ ...value, temperature: Number(event.target.value) }))} /></label>
             <label>朗读声源<select value={voiceProvider} onChange={(event) => { stopVoice(); setVoiceError(''); setVoiceProvider(event.target.value); }}><option value="browser">浏览器语音</option><option value="sovits">本地 GPT-SoVITS</option></select></label>
@@ -578,7 +579,7 @@ export default function App() {
             <div className="memory-summary"><MessageSquarePlus size={17} /><div><strong>聊天记录</strong><span>{historyError ? '等待写入本地数据库' : '已保存到 data/chat.sqlite，可随文件夹移动'}</span></div></div>
             <details className="notebook-summary"><summary><Brain size={17} /><span><strong>星空的成长档案</strong><small>{notebookNotes.length} 条 · 她自主记录的共同约定与长期事项</small></span></summary><div className="notebook-entries">{notebookNotes.length ? notebookNotes.map((note) => <div key={note.id}><span><b>{note.pinned ? '固定' : note.category}</b>{note.text}</span><aside><button type="button" onClick={() => toggleNotebookPin(note)} aria-label="固定笔记"><Pin size={13} /></button><button type="button" onClick={() => updateNotebookEntry(note)} aria-label="编辑笔记"><Pencil size={13} /></button><button type="button" onClick={() => removeNotebookEntry(note.id)} aria-label="删除笔记"><Trash2 size={13} /></button></aside></div>) : <p>星空还没有写下成长档案。</p>}</div></details>
             <button className="secondary-button" onClick={refreshModels}>重新检测模型</button>
-          </section>
+          </section></div>
         )}
 
         {view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : <><section className="conversation">

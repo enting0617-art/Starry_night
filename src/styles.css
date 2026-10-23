@@ -56,9 +56,13 @@ button { color: inherit; }
 .model-picker { position: relative; display: flex; align-items: center; }
 .model-picker select { appearance: none; border: 0; background: transparent; padding: 8px 28px 8px 10px; max-width: 260px; font-weight: 600; cursor: pointer; color: var(--ink); }
 .model-picker svg { position: absolute; right: 8px; pointer-events: none; color: var(--muted); }
-.settings-card { position: absolute; right: 20px; top: 58px; z-index: 10; width: min(390px, calc(100% - 40px)); border: 1px solid var(--line); border-radius: 14px; padding: 18px; background: rgba(251,250,246,.98); box-shadow: 0 18px 48px rgba(43,41,34,.14); }
-.settings-card > div { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
-.settings-card > div span { font-size: 11px; color: var(--muted); }
+.settings-window-backdrop { position: fixed; inset: 0; z-index: 50; padding: 28px; background: rgba(37,37,33,.26); display: grid; place-items: center; backdrop-filter: blur(3px); }
+.settings-card { width: min(680px, 100%); max-height: min(810px, calc(100vh - 56px)); overflow-y: auto; border: 1px solid var(--line); border-radius: 16px; padding: 22px; background: rgba(251,250,246,.99); box-shadow: 0 22px 65px rgba(43,41,34,.22); }
+.settings-window-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 19px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.settings-window-title strong, .settings-window-title span { display: block; }
+.settings-window-title strong { font: 600 19px/1.2 Georgia, 'Noto Serif SC', serif; }
+.settings-window-title span { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.settings-window-title .icon-button { flex: 0 0 auto; }
 .settings-card label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0; }
 .settings-card textarea { width: 100%; min-height: 84px; margin-top: 7px; resize: vertical; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 10px; }
 .settings-card input { width: 100%; display: block; margin-top: 8px; accent-color: var(--accent); }
@@ -339,6 +343,8 @@ button { color: inherit; }
   .topbar { padding: 0 12px; }
   .message-list { padding: 30px 16px 160px; }
   .composer-wrap { padding-left: 12px; padding-right: 12px; }
+  .settings-window-backdrop { padding: 12px; }
+  .settings-card { max-height: calc(100vh - 24px); padding: 16px; }
   .welcome { padding-bottom: 130px; }
   .debug-heading { align-items: flex-start; flex-direction: column; }
   .vision-heading { align-items: flex-start; flex-direction: column; }
