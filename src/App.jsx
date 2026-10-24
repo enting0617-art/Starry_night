@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Bot, Brain, Bug, ChevronDown, CircleStop, Globe2, ImagePlus, Images, ListTodo, Menu, MessageSquarePlus, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
 import CompanionAvatar from './CompanionAvatar.jsx';
 import VisionPanel from './VisionPanel.jsx';
 import TaskPanel from './TaskPanel.jsx';
+import WorkspaceDashboard from './WorkspaceDashboard.jsx';
+import WorkspaceRecords from './WorkspaceRecords.jsx';
 import { findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
 
 const STORAGE_KEY = 'portable-ollama-chat:v1';
@@ -54,6 +56,9 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [generationPhase, setGenerationPhase] = useState('idle');
   const [view, setView] = useState('chat');
+  const [mode, setMode] = useState(() => localStorage.getItem('xingkong:app-mode:v1') || 'companion');
+  const [workspaceSection, setWorkspaceSection] = useState(() => localStorage.getItem('xingkong:workspace-section:v1') || 'dashboard');
+  const [theme, setTheme] = useState(() => localStorage.getItem('xingkong:theme:v1') || 'night');
   const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('xingkong:auto-speak') === 'true');
   const [voiceProvider, setVoiceProvider] = useState(() => localStorage.getItem('xingkong:voice-provider:v2') || 'sovits');
   const [voiceError, setVoiceError] = useState('');
@@ -141,6 +146,9 @@ export default function App() {
   useEffect(() => { localStorage.setItem('xingkong:voice-provider:v2', voiceProvider); }, [voiceProvider]);
   useEffect(() => { localStorage.setItem('xingkong:auto-speak', String(autoSpeak)); }, [autoSpeak]);
   useEffect(() => { localStorage.setItem('xingkong:web-search', String(webSearchEnabled)); }, [webSearchEnabled]);
+  useEffect(() => { localStorage.setItem('xingkong:app-mode:v1', mode); }, [mode]);
+  useEffect(() => { localStorage.setItem('xingkong:workspace-section:v1', workspaceSection); }, [workspaceSection]);
+  useEffect(() => { localStorage.setItem('xingkong:theme:v1', theme); }, [theme]);
 
   useEffect(() => {
     if (!historyReady || !emojis.length) return;
@@ -521,39 +529,64 @@ export default function App() {
     }
   }
 
+  function openWorkspace(section = 'dashboard', conversationId) {
+    if (conversationId) setActiveId(conversationId);
+    if (section === 'companion') {
+      setView('chat');
+      setMode('companion');
+      return;
+    }
+    setWorkspaceSection(section);
+    setMode('workspace');
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme === 'moonlight' ? 'moonlight' : 'night'}>
       <aside className={`sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
         <div className="brand-row">
           <div className="brand-mark"><Sparkles size={18} /></div>
-          <strong>{config.appName}</strong>
+          <strong>{mode === 'workspace' ? 'Starry Night' : config.appName}</strong>
           <button className="icon-button desktop-only" onClick={() => setSidebarOpen(false)} aria-label="收起侧栏"><PanelLeftClose size={18} /></button>
         </div>
-        <button className="new-chat" onClick={createChat}><MessageSquarePlus size={18} /> 新对话</button>
-        <div className="history-label">最近对话</div>
-        <div className="history-list">
-          {conversations.map((conversation) => (
-            <button key={conversation.id} className={`history-item ${conversation.id === activeId ? 'active' : ''}`} onClick={() => { stopVoice(); setActiveId(conversation.id); }}>
-              <span>{conversation.title}</span>
-              <Trash2 className="delete-chat" size={15} onClick={(event) => removeChat(event, conversation.id)} />
-            </button>
-          ))}
-        </div>
+        {mode === 'workspace' ? <>
+          <nav className="workspace-nav" aria-label="工作台导航">
+            <button className={workspaceSection === 'dashboard' ? 'active' : ''} onClick={() => openWorkspace('dashboard')}><LayoutDashboard size={18} />概览</button>
+            <button className={workspaceSection === 'calendar' ? 'active' : ''} onClick={() => openWorkspace('calendar')}><CalendarDays size={18} />日历与提醒<span>即将</span></button>
+            <button className={workspaceSection === 'tasks' ? 'active' : ''} onClick={() => openWorkspace('tasks')}><ListTodo size={18} />任务工作台</button>
+            <button className={workspaceSection === 'memory' ? 'active' : ''} onClick={() => openWorkspace('memory')}><Brain size={18} />长期记忆</button>
+            <button className={workspaceSection === 'notes' ? 'active' : ''} onClick={() => openWorkspace('notes')}><NotebookPen size={18} />成长档案</button>
+            <button className={workspaceSection === 'vision' ? 'active' : ''} onClick={() => openWorkspace('vision')}><Images size={18} />图像与表情</button>
+            <button className={workspaceSection === 'tools' ? 'active' : ''} onClick={() => openWorkspace('tools')}><Bug size={18} />工具与诊断</button>
+          </nav>
+          <button className="workspace-return" onClick={() => openWorkspace('companion')}><Sparkles size={17} />返回陪伴模式</button>
+        </> : <>
+          <button className="new-chat" onClick={createChat}><MessageSquarePlus size={18} /> 新对话</button>
+          <div className="history-label">最近对话</div>
+          <div className="history-list">
+            {conversations.map((conversation) => (
+              <button key={conversation.id} className={`history-item ${conversation.id === activeId ? 'active' : ''}`} onClick={() => { stopVoice(); setActiveId(conversation.id); }}>
+                <span>{conversation.title}</span>
+                <Trash2 className="delete-chat" size={15} onClick={(event) => removeChat(event, conversation.id)} />
+              </button>
+            ))}
+          </div>
+        </>}
         <div className="sidebar-status">
           <span className={`status-dot ${status.ok ? 'online' : ''}`} />
           <div><strong>{status.ok ? 'Ollama 已连接' : 'Ollama 未连接'}</strong><small>{status.message}</small></div>
         </div>
-        <div className="sidebar-tools">
+        {mode === 'companion' && <div className="sidebar-tools">
           <button className={`admin-link ${view === 'vision' ? 'active' : ''}`} onClick={() => setView(view === 'vision' ? 'chat' : 'vision')}><Images size={17} /><span>{view === 'vision' ? '返回聊天' : '图像与表情'}</span></button>
           <button className={`admin-link ${view === 'tasks' ? 'active' : ''}`} onClick={() => setView(view === 'tasks' ? 'chat' : 'tasks')}><ListTodo size={17} /><span>{view === 'tasks' ? '返回聊天' : '任务工作台'}</span></button>
           <button className={`admin-link ${view === 'debug' ? 'active' : ''}`} onClick={() => setView(view === 'debug' ? 'chat' : 'debug')}><Bug size={17} /><span>{view === 'debug' ? '返回聊天' : '后台调试'}</span></button>
-        </div>
+        </div>}
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
           {!sidebarOpen && <button className="icon-button" onClick={() => setSidebarOpen(true)} aria-label="打开侧栏"><Menu size={20} /></button>}
-          {view === 'chat' && <div className="topbar-companion"><CompanionAvatar compact state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} /><span>{config.companion?.name}</span></div>}
+          {mode === 'companion' && view === 'chat' && <div className="topbar-companion"><CompanionAvatar compact state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} /><span>{config.companion?.name}</span></div>}
+          {mode === 'workspace' && <div className="workspace-topbar-title"><LayoutDashboard size={18} /><span>{workspaceSection === 'dashboard' ? '工作台概览' : workspaceSection === 'calendar' ? '日历与提醒' : workspaceSection === 'tasks' ? '任务工作台' : workspaceSection === 'memory' ? '长期记忆' : workspaceSection === 'notes' ? '成长档案' : workspaceSection === 'vision' ? '图像与表情' : '工具与诊断'}</span></div>}
           <div className="model-picker">
             <select value={model} onChange={(event) => setModel(event.target.value)} disabled={!models.length} aria-label="选择模型">
               {!models.length && <option value="">没有可用模型</option>}
@@ -561,15 +594,16 @@ export default function App() {
             </select>
             <ChevronDown size={15} />
           </div>
-          {view === 'chat' && <button className={`icon-button ${autoSpeak ? 'voice-on' : ''}`} onClick={toggleAutoSpeak} aria-label={autoSpeak ? '关闭自动播报' : '开启自动播报'} title={autoSpeak ? '自动播报已开启' : '自动播报已关闭'}>{autoSpeak ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>}
-          {view === 'chat' && <button className={`icon-button ${webSearchEnabled ? 'search-on' : ''}`} onClick={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} aria-label={webSearchEnabled ? '关闭智能联网' : '开启智能联网'} title={config.webSearch?.enabled ? (webSearchEnabled ? '智能联网已开启：需要核验的问题会自动搜索并附参考资料' : '智能联网已关闭') : '网络搜索已在配置中关闭'}><Globe2 size={19} /></button>}
+          {mode === 'companion' && view === 'chat' && <button className={`icon-button ${autoSpeak ? 'voice-on' : ''}`} onClick={toggleAutoSpeak} aria-label={autoSpeak ? '关闭自动播报' : '开启自动播报'} title={autoSpeak ? '自动播报已开启' : '自动播报已关闭'}>{autoSpeak ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>}
+          {mode === 'companion' && view === 'chat' && <button className={`icon-button ${webSearchEnabled ? 'search-on' : ''}`} onClick={() => setWebSearchEnabled((value) => !value)} disabled={!config.webSearch?.enabled} aria-label={webSearchEnabled ? '关闭智能联网' : '开启智能联网'} title={config.webSearch?.enabled ? (webSearchEnabled ? '智能联网已开启：需要核验的问题会自动搜索并附参考资料' : '智能联网已关闭') : '网络搜索已在配置中关闭'}><Globe2 size={19} /></button>}
+          <button className="mode-switch" onClick={() => mode === 'companion' ? openWorkspace('dashboard') : openWorkspace('companion')}><LayoutDashboard size={17} />{mode === 'companion' ? '工作台' : '陪伴'}</button>
           <button className="icon-button" onClick={() => setSettingsOpen((value) => !value)} aria-label="设置"><Settings2 size={19} /></button>
         </header>
 
-        {settingsOpen && view === 'chat' && (
+        {settingsOpen && (
           <div className="settings-window-backdrop" onMouseDown={() => setSettingsOpen(false)}>
           <section className="settings-card" role="dialog" aria-modal="true" aria-label="运行配置设置" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="settings-window-title"><div><strong>运行配置设置</strong><span>本地运行、陪伴方式与数据管理</span></div><button type="button" className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭运行配置设置"><X size={18} /></button></header>
+            <header className="settings-window-title"><div><strong>运行配置设置</strong><span>本地运行、陪伴方式与数据管理</span></div><div className="settings-title-actions"><button type="button" className="theme-toggle" onClick={() => setTheme((value) => value === 'night' ? 'moonlight' : 'night')}>{theme === 'night' ? '月光白' : '星夜蓝'}</button><button type="button" className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="关闭运行配置设置"><X size={18} /></button></div></header>
             <label>系统提示词<textarea value={config.systemPrompt} onChange={(event) => setConfig((value) => ({ ...value, systemPrompt: event.target.value }))} /></label>
             <label>温度：{config.temperature}<input type="range" min="0" max="2" step="0.1" value={config.temperature} onChange={(event) => setConfig((value) => ({ ...value, temperature: Number(event.target.value) }))} /></label>
             <label>朗读声源<select value={voiceProvider} onChange={(event) => { stopVoice(); setVoiceError(''); setVoiceProvider(event.target.value); }}><option value="browser">浏览器语音</option><option value="sovits">本地 GPT-SoVITS</option></select></label>
@@ -587,7 +621,7 @@ export default function App() {
           </section></div>
         )}
 
-        {view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
+        {mode === 'workspace' ? <>{workspaceSection === 'dashboard' ? <WorkspaceDashboard companionName={config.companion?.name} conversations={conversations} memories={memories} notes={notebookNotes} status={status} onNavigate={openWorkspace} /> : workspaceSection === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : workspaceSection === 'memory' ? <WorkspaceRecords kind="memory" items={memories} onPin={toggleMemoryPin} onEdit={updateMemoryEntry} onRemove={removeMemoryEntry} /> : workspaceSection === 'notes' ? <WorkspaceRecords kind="notes" items={notebookNotes} onPin={toggleNotebookPin} onEdit={updateNotebookEntry} onRemove={removeNotebookEntry} /> : workspaceSection === 'vision' ? <VisionPanel config={config} /> : workspaceSection === 'tools' ? <DebugPanel models={models} /> : <section className="workspace-page workspace-placeholder"><CalendarDays size={34} /><p className="workspace-kicker">CALENDAR & REMINDERS</p><h1>日历与提醒正在接入。</h1><p>这个入口已经固定在工作台中。下一阶段会先落地本地 SQLite 日程、确认式创建和应用内提醒，再做桌面通知。</p><button type="button" className="mode-switch" onClick={() => openWorkspace('dashboard')}>回到概览</button></section>}</> : view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
           {!active?.messages.length ? (
             <div className="welcome">
               <CompanionAvatar state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} />

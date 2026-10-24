@@ -87,7 +87,14 @@ public static class StarrySandbox {
 
   static void Grant(string path, IntPtr sid, FileSystemRights rights, AccessControlType type) {
     var security = Directory.GetAccessControl(path);
-    security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid), rights, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, type));
+    var identity = new SecurityIdentifier(sid);
+    var matching = new List<FileSystemAccessRule>();
+    foreach (FileSystemAccessRule existing in security.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
+      if (existing.IdentityReference.Value == identity.Value && existing.AccessControlType == type) matching.Add(existing);
+    }
+    if (matching.Count == 1 && matching[0].FileSystemRights == rights) return;
+    foreach (FileSystemAccessRule existing in matching) security.RemoveAccessRuleSpecific(existing);
+    security.AddAccessRule(new FileSystemAccessRule(identity, rights, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, type));
     Directory.SetAccessControl(path, security);
   }
   static void DenyWrite(string path, IntPtr sid) { Grant(path, sid, FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership, AccessControlType.Deny); }

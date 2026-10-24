@@ -1,0 +1,38 @@
+:root {
+  --ui-bg: #101a32;
+  --ui-surface: #1b2948;
+  --ui-surface-raised: #26385e;
+  --ui-accent: #a4b9ff;
+  --ui-accent-strong: #c6d3ff;
+  --ui-text: #f1f4ff;
+  --ui-muted: #aab8d0;
+  --ui-border: #344564;
+  --ui-success: #79c8aa;
+  --ui-danger: #f094a2;
+  --ui-focus: #d9e1ff;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --motion-fast: 140ms;
+  --motion-standard: 190ms;
+}
+
+.app-shell[data-theme='moonlight'] {
+  --ui-bg: #f5f7fc;
+  --ui-surface: #ffffff;
+  --ui-surface-raised: #edf2fb;
+  --ui-accent: #536fcc;
+  --ui-accent-strong: #3d57aa;
+  --ui-text: #23304a;
+  --ui-muted: #68788f;
+  --ui-border: #dce4f0;
+  --ui-success: #257c60;
+  --ui-danger: #b6344d;
+  --ui-focus: #2549ae;
+}
+
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--ui-focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}

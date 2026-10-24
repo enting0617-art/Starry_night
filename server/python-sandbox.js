@@ -22,7 +22,9 @@ function runHelper(request) {
   return new Promise((resolveResult) => {
     const child = spawn(helperPath, [], { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
     let output = ''; let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.min(70_000, Number(request.timeoutMs || 12_000) + 10_000));
+    // The Python Job itself has the strict 12-second limit. Keep the broker watchdog longer
+    // so first-run AppContainer profile/ACL setup cannot be mistaken for user-code runtime.
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.min(70_000, Number(request.timeoutMs || 12_000) + 55_000));
     child.stdout.on('data', (chunk) => { if (output.length < 2_300_000) output += chunk.toString(); });
     child.on('error', (error) => { clearTimeout(timer); resolveResult({ ok: false, error: `无法启动原生沙盒：${error.message}` }); });
     child.on('close', () => {
