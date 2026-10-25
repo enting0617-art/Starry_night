@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { loadConfig, projectRoot } from './config.js';
 import { listMemories } from './memory.js';
 import { readMemoryItems, replaceMemoryItems } from './memory-store.js';
+import { deduplicateItems, duplicateScore, findDuplicate } from './deduplication.js';
 
 const notebookPath = join(projectRoot, 'data', 'xingkong-notes.json');
 const categories = new Set(['identity', 'preference', 'plan', 'shared', 'other']);
@@ -103,8 +104,9 @@ export async function applyNotebookCommands(output) {
     const text = safeText(command[2]);
     if (!text) continue;
     const identity = category === 'identity' ? identityValue(text) : '';
-    const duplicate = notes.find((note) => normalize(note.text) === normalize(text) || (identity && note.category === 'identity' && identityValue(note.text) === identity));
+    const duplicate = findDuplicate(notes, text) || notes.find((note) => identity && note.category === 'identity' && identityValue(note.text) === identity);
     if (duplicate) {
+      if (!duplicate.pinned && text.length > duplicate.text.length) duplicate.text = text;
       duplicate.updatedAt = new Date().toISOString();
       duplicate.pinned ||= category === 'identity';
       continue;
@@ -113,7 +115,7 @@ export async function applyNotebookCommands(output) {
     notes.push({ id: globalThis.crypto.randomUUID(), category, text, pinned: category === 'identity', source: 'xingkong', createdAt: now, updatedAt: now });
     saved += 1;
   }
-  if (commands.length) await saveNotes(notes.slice(-config.notebook.maxNotes));
+  if (commands.length) await saveNotes(deduplicateItems(notes).items.slice(-config.notebook.maxNotes));
   return { commands: commands.length, saved };
 }
 
@@ -137,6 +139,14 @@ export async function updateNotebookNote(id, changes = {}) {
   if (Object.hasOwn(changes, 'pinned')) note.pinned = Boolean(changes.pinned);
   if (Object.hasOwn(changes, 'category') && categories.has(String(changes.category))) note.category = String(changes.category);
   note.updatedAt = new Date().toISOString();
-  await saveNotes(notes);
-  return note;
+  const result = deduplicateItems(notes);
+  await saveNotes(result.items);
+  return result.items.find((item) => item.id === id) || result.items.find((item) => duplicateScore(item.text, note.text) >= 0.88) || null;
+}
+
+export async function deduplicateNotebookNotes() {
+  const notes = await readNotes();
+  const result = deduplicateItems(notes);
+  if (result.removed) await saveNotes(result.items);
+  return { before: notes.length, after: result.items.length, removed: result.removed };
 }

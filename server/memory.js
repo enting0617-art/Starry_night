@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { projectRoot } from './config.js';
 import { readMemoryItems, replaceMemoryItems } from './memory-store.js';
+import { deduplicateItems, duplicateScore, findDuplicate } from './deduplication.js';
 
 const memoryPath = join(projectRoot, 'data', 'memories.json');
 let writeQueue = Promise.resolve();
@@ -126,8 +127,17 @@ export async function updateMemory(id, changes = {}) {
   }
   if (Object.hasOwn(changes, 'pinned')) memory.pinned = Boolean(changes.pinned);
   memory.updatedAt = new Date().toISOString();
-  await saveMemories(memories);
-  return withoutEmbedding(memory);
+  const result = deduplicateItems(memories);
+  await saveMemories(result.items);
+  const retained = result.items.find((item) => item.id === id) || result.items.find((item) => duplicateScore(item.text, memory.text) >= 0.88);
+  return retained ? withoutEmbedding(retained) : null;
+}
+
+export async function deduplicateMemories() {
+  const memories = await readMemories();
+  const result = deduplicateItems(memories);
+  if (result.removed) await saveMemories(result.items);
+  return { before: memories.length, after: result.items.length, removed: result.removed };
 }
 
 export async function extractAndSaveMemories({ userText, assistantText, model, config }) {
@@ -158,8 +168,12 @@ export async function extractAndSaveMemories({ userText, assistantText, model, c
 
     const memories = await readMemories();
     for (const text of facts) {
-      const duplicate = memories.find((memory) => lexicalScore(text, memory.text) > 0.82);
+      const duplicate = findDuplicate(memories, text);
       if (duplicate) {
+        if (!duplicate.pinned && text.length > duplicate.text.length) {
+          duplicate.text = text;
+          duplicate.embedding = await embed(text, config);
+        }
         duplicate.updatedAt = new Date().toISOString();
         continue;
       }
@@ -171,7 +185,8 @@ export async function extractAndSaveMemories({ userText, assistantText, model, c
         embedding: await embed(text, config),
       });
     }
-    await saveMemories(memories.slice(-config.companion.maxMemories));
+    const deduplicated = deduplicateItems(memories).items;
+    await saveMemories(deduplicated.slice(-config.companion.maxMemories));
   } catch (error) {
     console.warn(`Memory extraction skipped: ${error.message}`);
   }

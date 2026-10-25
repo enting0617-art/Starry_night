@@ -19,6 +19,8 @@ database.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_companion_tasks_conversation ON companion_tasks(conversation_id, updated_at DESC);
 `);
+const taskColumns = new Set(database.prepare('PRAGMA table_info(companion_tasks)').all().map((column) => column.name));
+if (!taskColumns.has('workspace_path')) database.exec('ALTER TABLE companion_tasks ADD COLUMN workspace_path TEXT');
 
 function clean(value, limit) {
   return String(value || '').replace(/\s+/gu, ' ').trim().slice(0, limit);
@@ -33,6 +35,7 @@ function row(item) {
     status: item.status,
     currentState: item.current_state,
     nextStep: item.next_step,
+    workspacePath: item.workspace_path || '',
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
@@ -76,6 +79,23 @@ export function updateTask(id, changes = {}) {
   database.prepare(`UPDATE companion_tasks SET title = ?, goal = ?, status = ?, current_state = ?, next_step = ?, updated_at = ? WHERE id = ?`)
     .run(next.title, next.goal, next.status, next.currentState, next.nextStep, next.updatedAt, next.id);
   return next;
+}
+
+export function removeTask(id) {
+  return database.prepare('DELETE FROM companion_tasks WHERE id = ?').run(String(id)).changes > 0;
+}
+
+export function setTaskWorkspace(id, workspacePath) {
+  const updatedAt = new Date().toISOString();
+  const result = database.prepare('UPDATE companion_tasks SET workspace_path = ?, updated_at = ? WHERE id = ?')
+    .run(String(workspacePath || ''), updatedAt, String(id));
+  if (!result.changes) return null;
+  return row(database.prepare('SELECT * FROM companion_tasks WHERE id = ?').get(String(id)));
+}
+
+export function getTask(id) {
+  const item = database.prepare('SELECT * FROM companion_tasks WHERE id = ?').get(String(id));
+  return item ? row(item) : null;
 }
 
 export function getActiveTaskContext(conversationId) {

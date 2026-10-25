@@ -17,8 +17,13 @@ import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNote
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
 import { buildShortTermContext } from './context-memory.js';
 import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
-import { applyTaskUpdates, createTask, getActiveTaskContext, listTasks, updateTask } from './task-store.js';
+import { applyTaskUpdates, createTask, getActiveTaskContext, getTask, listTasks, removeTask, setTaskWorkspace, updateTask } from './task-store.js';
+import { createCalendarEvent, listCalendarEvents, listCalendarReminders, removeCalendarEvent, takeDueCalendarNotifications, updateCalendarEvent, updateCalendarReminder } from './calendar-store.js';
+import { buildCalendarContext, calendarContextWindow } from './calendar-context.js';
 import { getPythonSandboxStatus, runPythonInSandbox } from './python-sandbox.js';
+import { startReminderScheduler } from './reminder-scheduler.js';
+import { applyWorkspaceActions, authorizeWorkspace, buildInboxContext, buildWorkspaceContext, inboxPath, listInboxFiles, openFolder } from './workspace-service.js';
+import { startMemoryMaintenanceScheduler } from './memory-maintenance.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -130,6 +135,81 @@ app.patch('/api/tasks/:id', (request, response, next) => {
     const task = updateTask(request.params.id, request.body || {});
     response.status(task ? 200 : 404).json({ task });
   } catch (error) { next(error); }
+});
+
+app.delete('/api/tasks/:id', (request, response, next) => {
+  try {
+    const removed = removeTask(request.params.id);
+    response.status(removed ? 200 : 404).json({ removed });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/tasks/:id/workspace', async (request, response, next) => {
+  try {
+    if (!getTask(request.params.id)) return response.status(404).json({ error: '任务不存在。' });
+    const workspacePath = await authorizeWorkspace(request.body?.path, { create: request.body?.create === true });
+    response.json({ task: setTaskWorkspace(request.params.id, workspacePath) });
+  } catch (error) { next(error); }
+});
+
+app.delete('/api/tasks/:id/workspace', (request, response, next) => {
+  try {
+    const task = setTaskWorkspace(request.params.id, '');
+    response.status(task ? 200 : 404).json({ task });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/tasks/:id/workspace/open', (request, response, next) => {
+  try {
+    const task = getTask(request.params.id);
+    if (!task?.workspacePath) return response.status(404).json({ error: '这个任务尚未绑定目标目录。' });
+    response.json({ opened: true, path: openFolder(task.workspacePath) });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/workspace/inbox', async (_request, response, next) => {
+  try { response.json({ path: inboxPath, files: await listInboxFiles() }); } catch (error) { next(error); }
+});
+
+app.post('/api/workspace/inbox/open', (_request, response, next) => {
+  try { response.json({ opened: true, path: openFolder(inboxPath) }); } catch (error) { next(error); }
+});
+
+app.get('/api/calendar/events', (request, response, next) => {
+  try { response.json({ events: listCalendarEvents(request.query) }); } catch (error) { next(error); }
+});
+
+app.post('/api/calendar/events', (request, response, next) => {
+  try { response.status(201).json({ event: createCalendarEvent(request.body || {}) }); } catch (error) { next(error); }
+});
+
+app.patch('/api/calendar/events/:id', (request, response, next) => {
+  try {
+    const event = updateCalendarEvent(request.params.id, request.body || {});
+    response.status(event ? 200 : 404).json({ event });
+  } catch (error) { next(error); }
+});
+
+app.delete('/api/calendar/events/:id', (request, response, next) => {
+  try {
+    const removed = removeCalendarEvent(request.params.id);
+    response.status(removed ? 200 : 404).json({ removed });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/calendar/reminders', (_request, response, next) => {
+  try { response.json({ reminders: listCalendarReminders() }); } catch (error) { next(error); }
+});
+
+app.patch('/api/calendar/reminders/:id', (request, response, next) => {
+  try {
+    const updated = updateCalendarReminder(request.params.id, request.body || {});
+    response.status(updated ? 200 : 404).json({ updated });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/calendar/notifications', (_request, response, next) => {
+  try { response.json({ notifications: takeDueCalendarNotifications() }); } catch (error) { next(error); }
 });
 
 app.get('/api/python-sandbox/status', async (_request, response, next) => {
@@ -429,10 +509,23 @@ app.post('/api/chat', async (request, response, next) => {
     const localClock = new Intl.DateTimeFormat('zh-CN', {
       timeZone: config.webSearch.timeZone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     }).format(now);
-    const clockContext = `后台本机时钟：${localClock}（时区：${config.webSearch.timeZone}；UTC：${now.toISOString()}）。用户询问当前时间或日期时，直接依据这里回答，并明确时区；不要改成北京时间，除非用户明确询问北京时间。不要主动声称可以设置提醒，因为当前平台没有提醒工具。`;
+    const clockContext = `后台本机时钟：${localClock}（时区：${config.webSearch.timeZone}；UTC：${now.toISOString()}）。用户询问当前时间或日期时，直接依据这里回答，并明确时区；不要改成北京时间，除非用户明确询问北京时间。你可以为用户准备日程和提醒草案，但不能直接创建。用户明确要求新建日程、安排时间或设置提醒时：若日期、开始时间或标题存在实质歧义，先自然追问；信息充分时，先用自然语言简要复述，然后在正文结束、表情标记之前输出一个日程草案块：[[CALENDAR_PROPOSAL]]{"title":"简短标题","description":"可选说明","startAt":"带时区偏移的 ISO 8601 时间","endAt":"带时区偏移的 ISO 8601 时间","timezone":"${config.webSearch.timeZone}","allDay":false,"remindBeforeMinutes":10}[[/CALENDAR_PROPOSAL]]。普通定时日程如果用户没说持续时间，默认一小时；如果用户只说“提醒我”但没说提前多久，则提醒时间设为事件开始时，即 remindBeforeMinutes 为 0。全天日程使用当地日期的午夜作为起止时间，结束日期为下一天。每轮最多一个草案。不要声称已经创建；界面会显示确认卡，只有用户点击确认后才会保存。`;
+    const calendarWindow = calendarContextWindow(latestUserText, now);
+    const calendarEvents = listCalendarEvents({ ...calendarWindow, limit: calendarWindow.limit + 1 });
+    const calendarContext = buildCalendarContext(calendarEvents, {
+      userText: latestUserText,
+      now,
+      timeZone: config.webSearch.timeZone,
+      window: calendarWindow,
+    });
     const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(latestUserText, config.emoji.assistantCandidateCount) : [];
     const emojiContext = emojiCandidates.length ? `${config.emoji.assistantAlwaysSend ? '每一条正常回复都必须从候选列表选择一张真实表情包，不能省略。' : '仅在确实适合当前语气时选择一张表情包。'}只能从下面列表选择一个，并在完整正文全部结束后另起最后一行写 [[EMOJI:序号]]，标记后绝对不能再写任何文字。每次恰好一个，不得编造序号。禁止使用 Unicode 绘文字或“小黄豆”表情，例如笑脸、月亮、爱心等字符；情绪只能通过本地表情包表达。只有实际输出了有效标记时才能在正文中说自己发送了表情。正文中禁止书写“星空发送的表情含义”“助手发送的表情含义”等说明，禁止自己描述、假设或创造列表之外的表情，禁止输出表情图片链接或 Markdown 图片；界面会根据真实序号显示图片。\n可用表情：\n${emojiCandidates.map((item) => `- ${item.id}: ${item.description}`).join('\n')}` : '';
     const activeTask = getActiveTaskContext(conversationId);
+    const inboxContext = await buildInboxContext();
+    const workspaceSnapshot = activeTask?.workspacePath ? await buildWorkspaceContext(activeTask.workspacePath) : '';
+    const workspaceContext = activeTask?.workspacePath
+      ? `${workspaceSnapshot}\n你可以读取上面列出的工作区内容，并在此目录内创建子文件夹、创建或更新文本文件。确实需要写入时，在正文结束、表情标记之前输出一个操作块：[[WORKSPACE_ACTIONS]]{"actions":[{"type":"mkdir","path":"相对目录"},{"type":"write","path":"相对文件.txt","content":"完整文本内容"}]}[[/WORKSPACE_ACTIONS]]。路径必须相对于工作目录，不得使用绝对路径或 ..，每轮最多 12 项；只允许 mkdir 和 write，不允许删除、运行程序或访问目录外内容。操作块不会展示给用户，系统会在已授权目录内执行。`
+      : '当前任务尚未获得任何工作目录授权。不要声称可以读写任务文件，也不要输出工作区操作。用户需要先在任务工作台绑定或确认创建目录。';
     const pythonRequested = /(?:\bpython\b|\bpy\b|写(?:个|一段|一个)?(?:程序|脚本|代码)|运行(?:程序|脚本|代码)|代码执行)/iu.test(latestUserText);
     const pythonContext = pythonRequested
       ? '用户本轮明确请求 Python 编写或运行。你可选择使用隔离 Python 工具：先在正文正常说明你要做什么；若确实需要执行，正文结束、表情标记之前以独占块输出 [[PYTHON_CODE:安全文件名.py]]，下一行开始放 Python 源码，最后一行 [[/PYTHON_CODE]]。只能写纯计算、文本处理或数据演示代码；不得读写文件、访问网络、启动进程、导入未列出的模块或尝试规避限制。系统会在运行前审计，并仅在 Windows AppContainer + Job Object 原生沙盒中运行（无网络、受限文件系统、单进程和资源限制）。不要在用户没有明确请求时使用，也不要假装代码已经成功运行。运行结果会由界面回传。'
@@ -440,7 +533,7 @@ app.post('/api/chat', async (request, response, next) => {
     const taskContext = activeTask
       ? `当前有一项持续任务。目标：${activeTask.goal}\n当前状态：${activeTask.currentState || '尚未写入'}\n下一步：${activeTask.nextStep || '尚未写入'}\n请围绕任务给出真实进展；完成、遇到阻塞或产生明确下一步时，在正文结束、表情标记之前另起一行输出 [[TASK_UPDATE:active|简短当前状态|下一步]]。状态只能是 active、blocked 或 done。该标记不会显示给用户。不要把闲聊强行变成任务，也不要虚构执行过的操作。`
       : '';
-    const completePrompt = [config.companion.persona, prompt, clockContext, notebookContext, memoryContext, taskContext, pythonContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
+    const completePrompt = [config.companion.persona, prompt, clockContext, calendarContext, inboxContext, workspaceContext, notebookContext, memoryContext, taskContext, pythonContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
     const shortTerm = buildShortTermContext({ conversationId, messages });
     const shortTermContext = shortTerm.summary
       ? `本次对话较早部分的压缩摘要（仅用于保持上下文，不要提及此摘要）：\n${shortTerm.summary}`
@@ -536,6 +629,14 @@ app.post('/api/chat', async (request, response, next) => {
       const pythonSandbox = await runPythonInSandbox({ fileName: pythonBlock[1], source: pythonBlock[2] });
       response.write(`${JSON.stringify({ pythonSandbox })}\n`);
     }
+    if (activeTask?.workspacePath && /\[\[WORKSPACE_ACTIONS\]\]/iu.test(assistantText)) {
+      try {
+        const workspaceResult = await applyWorkspaceActions(activeTask.workspacePath, assistantText);
+        response.write(`${JSON.stringify({ workspaceResult })}\n`);
+      } catch (error) {
+        response.write(`${JSON.stringify({ workspaceResult: { error: error.message, applied: 0, files: [] } })}\n`);
+      }
+    }
     if (searchPlan.shouldSearch) {
       response.write(`${JSON.stringify({ searchReferences: searchResults.map(({ title, url, snippet }) => ({ title, url, snippet })), searchError })}\n`);
     }
@@ -545,6 +646,8 @@ app.post('/api/chat', async (request, response, next) => {
       .replace(/\s*\[\[NOTE:[a-z]+\|[^\]\r\n]+\]\]\s*/giu, '\n')
       .replace(/\s*\[\[TASK_UPDATE:(?:active|blocked|done)\|[^|\]\r\n]*\|[^\]\r\n]*\]\]\s*/giu, '\n')
       .replace(/\s*\[\[PYTHON_CODE:[^\]\r\n]+\]\][\s\S]*?\[\[\/PYTHON_CODE\]\]\s*/giu, '\n')
+      .replace(/\s*\[\[CALENDAR_PROPOSAL\]\][\s\S]*?\[\[\/CALENDAR_PROPOSAL\]\]\s*/giu, '\n')
+      .replace(/\s*\[\[WORKSPACE_ACTIONS\]\][\s\S]*?\[\[\/WORKSPACE_ACTIONS\]\]\s*/giu, '\n')
       .replace(/^\s*(?:星空|助手|AI)发送的表情(?:包)?含义[:：].*$/gimu, '')
       .trim();
     if (config.notebook.enabled && !searchPlan.shouldSearch) void applyNotebookCommands(assistantText).catch((error) => console.warn(`Notebook update skipped: ${error.message}`));
@@ -595,9 +698,13 @@ const server = app.listen(config.server.port, config.server.host, (error) => {
 });
 server.on('error', reportStartupError);
 server.ref();
+const stopReminderScheduler = startReminderScheduler();
+const stopMemoryMaintenanceScheduler = startMemoryMaintenanceScheduler({ timeZone: config.webSearch.timeZone });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    stopReminderScheduler();
+    stopMemoryMaintenanceScheduler();
     server.close(() => process.exit(0));
   });
 }

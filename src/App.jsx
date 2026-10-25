@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, FolderOpen, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
@@ -8,7 +8,8 @@ import VisionPanel from './VisionPanel.jsx';
 import TaskPanel from './TaskPanel.jsx';
 import WorkspaceDashboard from './WorkspaceDashboard.jsx';
 import WorkspaceRecords from './WorkspaceRecords.jsx';
-import { findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
+import CalendarPage from './CalendarPage.jsx';
+import { extractCalendarProposal, findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
 
 const STORAGE_KEY = 'portable-ollama-chat:v1';
 
@@ -378,6 +379,22 @@ export default function App() {
     else setProactiveStatus('主动联系设置保存失败。');
   }
 
+  async function confirmCalendarProposal(conversationId, messageId, proposal) {
+    updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, calendarProposalStatus: 'saving', calendarProposalError: '' } : message) }));
+    try {
+      const response = await fetch('/api/calendar/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proposal) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '创建日程失败');
+      updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, calendarProposalStatus: 'created', calendarEventId: data.event.id } : message), updatedAt: timestamp() }));
+    } catch (error) {
+      updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, calendarProposalStatus: 'error', calendarProposalError: error.message } : message) }));
+    }
+  }
+
+  function dismissCalendarProposal(conversationId, messageId) {
+    updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, calendarProposalStatus: 'dismissed' } : message), updatedAt: timestamp() }));
+  }
+
   useEffect(() => {
     if (!historyReady || !activeConversationId || !model || generating || !proactive.enabled) return undefined;
     let cancelled = false;
@@ -464,6 +481,9 @@ export default function App() {
         if (chunk.pythonSandbox) {
           updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, pythonSandbox: chunk.pythonSandbox } : message) }));
         }
+        if (chunk.workspaceResult) {
+          updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, workspaceResult: chunk.workspaceResult } : message) }));
+        }
         if (Array.isArray(chunk.searchReferences)) {
           searchReferences = chunk.searchReferences;
           updateConversation(conversationId, (conversation) => ({
@@ -505,10 +525,11 @@ export default function App() {
       if (buffer.trim()) handleChunk(JSON.parse(buffer));
       if (!assistantText.trim()) throw new Error(thinkingText ? '模型完成了思考，但没有返回最终回答。请重试或更换模型。' : 'Ollama 已结束连接，但没有返回任何内容。');
       const assistantEmoji = findSelectedAssistantEmoji(assistantText, emojis);
+      const calendarProposal = extractCalendarProposal(assistantText);
       const cleanAssistantText = sanitizeAssistantContent(assistantText);
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
-        messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: cleanAssistantText, emojiId: assistantEmoji?.id || null, emojiDescription: assistantEmoji?.description || null } : message),
+        messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: cleanAssistantText, emojiId: assistantEmoji?.id || null, emojiDescription: assistantEmoji?.description || null, calendarProposal, calendarProposalStatus: calendarProposal ? 'pending' : undefined } : message),
       }));
       if (autoSpeak && cleanAssistantText) playVoice(assistantMessage.id, cleanAssistantText);
       setTimeout(() => {
@@ -551,7 +572,7 @@ export default function App() {
         {mode === 'workspace' ? <>
           <nav className="workspace-nav" aria-label="工作台导航">
             <button className={workspaceSection === 'dashboard' ? 'active' : ''} onClick={() => openWorkspace('dashboard')}><LayoutDashboard size={18} />概览</button>
-            <button className={workspaceSection === 'calendar' ? 'active' : ''} onClick={() => openWorkspace('calendar')}><CalendarDays size={18} />日历与提醒<span>即将</span></button>
+            <button className={workspaceSection === 'calendar' ? 'active' : ''} onClick={() => openWorkspace('calendar')}><CalendarDays size={18} />日历与提醒</button>
             <button className={workspaceSection === 'tasks' ? 'active' : ''} onClick={() => openWorkspace('tasks')}><ListTodo size={18} />任务工作台</button>
             <button className={workspaceSection === 'memory' ? 'active' : ''} onClick={() => openWorkspace('memory')}><Brain size={18} />长期记忆</button>
             <button className={workspaceSection === 'notes' ? 'active' : ''} onClick={() => openWorkspace('notes')}><NotebookPen size={18} />成长档案</button>
@@ -621,7 +642,7 @@ export default function App() {
           </section></div>
         )}
 
-        {mode === 'workspace' ? <>{workspaceSection === 'dashboard' ? <WorkspaceDashboard companionName={config.companion?.name} conversations={conversations} memories={memories} notes={notebookNotes} status={status} onNavigate={openWorkspace} /> : workspaceSection === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : workspaceSection === 'memory' ? <WorkspaceRecords kind="memory" items={memories} onPin={toggleMemoryPin} onEdit={updateMemoryEntry} onRemove={removeMemoryEntry} /> : workspaceSection === 'notes' ? <WorkspaceRecords kind="notes" items={notebookNotes} onPin={toggleNotebookPin} onEdit={updateNotebookEntry} onRemove={removeNotebookEntry} /> : workspaceSection === 'vision' ? <VisionPanel config={config} /> : workspaceSection === 'tools' ? <DebugPanel models={models} /> : <section className="workspace-page workspace-placeholder"><CalendarDays size={34} /><p className="workspace-kicker">CALENDAR & REMINDERS</p><h1>日历与提醒正在接入。</h1><p>这个入口已经固定在工作台中。下一阶段会先落地本地 SQLite 日程、确认式创建和应用内提醒，再做桌面通知。</p><button type="button" className="mode-switch" onClick={() => openWorkspace('dashboard')}>回到概览</button></section>}</> : view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
+        {mode === 'workspace' ? <>{workspaceSection === 'dashboard' ? <WorkspaceDashboard companionName={config.companion?.name} conversations={conversations} memories={memories} notes={notebookNotes} status={status} onNavigate={openWorkspace} /> : workspaceSection === 'calendar' ? <CalendarPage theme={theme} /> : workspaceSection === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : workspaceSection === 'memory' ? <WorkspaceRecords kind="memory" items={memories} onPin={toggleMemoryPin} onEdit={updateMemoryEntry} onRemove={removeMemoryEntry} /> : workspaceSection === 'notes' ? <WorkspaceRecords kind="notes" items={notebookNotes} onPin={toggleNotebookPin} onEdit={updateNotebookEntry} onRemove={removeNotebookEntry} /> : workspaceSection === 'vision' ? <VisionPanel config={config} /> : <DebugPanel models={models} />}</> : view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
           {!active?.messages.length ? (
             <div className="welcome">
               <CompanionAvatar state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} />
@@ -636,8 +657,8 @@ export default function App() {
                 <article key={message.id} className={`message ${message.role}`}>
                   <div className="avatar">{message.role === 'user' ? <UserRound size={17} /> : <Bot size={18} />}</div>
                   <div className="message-content">
-                    <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}</div>
-                    {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.pythonSandbox && <details className="sandbox-result"><summary>Python 隔离运行 {message.pythonSandbox.ran && message.pythonSandbox.exitCode === 0 ? '完成' : '未执行或失败'}</summary><p>{message.pythonSandbox.ran ? '已在 Windows 原生 AppContainer + Job Object 沙盒中执行。' : '未在宿主机执行。'}</p>{message.pythonSandbox.audit?.errors?.length ? <pre>{message.pythonSandbox.audit.errors.join('\n')}</pre> : null}{message.pythonSandbox.error ? <pre>{message.pythonSandbox.error}</pre> : null}{message.pythonSandbox.stdout ? <pre>{message.pythonSandbox.stdout}</pre> : null}{message.pythonSandbox.stderr ? <pre>{message.pythonSandbox.stderr}</pre> : null}</details>}{message.searchedWeb && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences?.length || 0}）</summary><div className="search-reference-list">{message.searchReferences?.length ? message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>) : <span className="search-reference-empty">{message.searchError ? `搜索未成功：${message.searchError}` : '本次搜索没有返回可引用的公开资料。'}</span>}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
+                    <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}{message.workspaceResult && <span className="searched-badge"><FolderOpen size={11} />{message.workspaceResult.error ? '文件操作失败' : `已处理 ${message.workspaceResult.applied || 0} 项文件`}</span>}</div>
+                    {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.calendarProposal && message.calendarProposalStatus !== 'dismissed' && <section className={`calendar-proposal ${message.calendarProposalStatus || 'pending'}`}><header><CalendarDays size={17} /><div><strong>{message.calendarProposal.title}</strong><span>{message.calendarProposalStatus === 'created' ? '已写入星空日历' : '等待你确认'}</span></div></header><p>{new Date(message.calendarProposal.startAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })} — {new Date(message.calendarProposal.endAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })}</p>{message.calendarProposal.description && <small>{message.calendarProposal.description}</small>}<small>{message.calendarProposal.remindBeforeMinutes === null ? '不提醒' : message.calendarProposal.remindBeforeMinutes === 0 ? '开始时提醒' : `提前 ${message.calendarProposal.remindBeforeMinutes} 分钟提醒`} · {message.calendarProposal.timezone}</small>{message.calendarProposalError && <em>{message.calendarProposalError}</em>}{message.calendarProposalStatus !== 'created' && <footer><button type="button" onClick={() => dismissCalendarProposal(active.id, message.id)} disabled={message.calendarProposalStatus === 'saving'}>暂不创建</button><button type="button" className="confirm" onClick={() => confirmCalendarProposal(active.id, message.id, message.calendarProposal)} disabled={message.calendarProposalStatus === 'saving'}>{message.calendarProposalStatus === 'saving' ? '正在创建…' : message.calendarProposalStatus === 'error' ? '重试创建' : '确认创建'}</button></footer>}</section>}{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.pythonSandbox && <details className="sandbox-result"><summary>Python 隔离运行 {message.pythonSandbox.ran && message.pythonSandbox.exitCode === 0 ? '完成' : '未执行或失败'}</summary><p>{message.pythonSandbox.ran ? '已在 Windows 原生 AppContainer + Job Object 沙盒中执行。' : '未在宿主机执行。'}</p>{message.pythonSandbox.audit?.errors?.length ? <pre>{message.pythonSandbox.audit.errors.join('\n')}</pre> : null}{message.pythonSandbox.error ? <pre>{message.pythonSandbox.error}</pre> : null}{message.pythonSandbox.stdout ? <pre>{message.pythonSandbox.stdout}</pre> : null}{message.pythonSandbox.stderr ? <pre>{message.pythonSandbox.stderr}</pre> : null}</details>}{message.searchedWeb && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences?.length || 0}）</summary><div className="search-reference-list">{message.searchReferences?.length ? message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>) : <span className="search-reference-empty">{message.searchError ? `搜索未成功：${message.searchError}` : '本次搜索没有返回可引用的公开资料。'}</span>}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
                   </div>
                 </article>
               ))}

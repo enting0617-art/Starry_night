@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findSelectedAssistantEmoji, sanitizeAssistantContent } from '../src/chat-format.js';
+import { extractCalendarProposal, findSelectedAssistantEmoji, sanitizeAssistantContent } from '../src/chat-format.js';
 
 test('recognizes a real emoji marker even when text follows it', () => {
   const text = '我发一个表情给你～ [[EMOJI:178]] 如果还想看，也可以告诉我。';
@@ -38,4 +38,18 @@ test('hides private task checkpoints from the visible reply', () => {
 
 test('hides sandbox source blocks from the visible reply', () => {
   assert.equal(sanitizeAssistantContent('我来算一下。\n[[PYTHON_CODE:demo.py]]\nprint(2 + 2)\n[[/PYTHON_CODE]]'), '我来算一下。');
+});
+
+test('extracts and hides a valid calendar proposal', () => {
+  const text = '我准备了一条日程。\n[[CALENDAR_PROPOSAL]]{"title":"复习 SQL","description":"CMPUT 291","startAt":"2026-10-27T15:00:00-06:00","endAt":"2026-10-27T16:00:00-06:00","timezone":"America/Edmonton","allDay":false,"remindBeforeMinutes":10}[[/CALENDAR_PROPOSAL]]';
+  const proposal = extractCalendarProposal(text);
+  assert.equal(proposal.title, '复习 SQL');
+  assert.equal(proposal.startAt, '2026-10-27T21:00:00.000Z');
+  assert.equal(proposal.remindBeforeMinutes, 10);
+  assert.equal(sanitizeAssistantContent(text), '我准备了一条日程。');
+});
+
+test('rejects invalid calendar proposal ranges', () => {
+  const text = '[[CALENDAR_PROPOSAL]]{"title":"错误日程","startAt":"2026-10-27T16:00:00Z","endAt":"2026-10-27T15:00:00Z"}[[/CALENDAR_PROPOSAL]]';
+  assert.equal(extractCalendarProposal(text), null);
 });

@@ -26,7 +26,7 @@ export default function WorkspaceDashboard({ companionName, conversations, memor
         <button type="button" className="workspace-stat-card" onClick={() => onNavigate('tasks')}><CheckCircle2 /><span>任务工作台</span><strong>继续推进</strong><small>将长期目标拆成可追踪步骤</small></button>
         <button type="button" className="workspace-stat-card" onClick={() => onNavigate('memory')}><Brain /><span>长期记忆</span><strong>{memories.length} 条</strong><small>可查看、固定和修正重要信息</small></button>
         <button type="button" className="workspace-stat-card" onClick={() => onNavigate('notes')}><NotebookPen /><span>成长档案</span><strong>{notes.length} 条</strong><small>星空自主记录的长期约定</small></button>
-        <button type="button" className="workspace-stat-card muted" onClick={() => onNavigate('calendar')}><CalendarDays /><span>日历与提醒</span><strong>即将加入</strong><small>先保留入口，提醒功能会单独上线</small></button>
+        <button type="button" className="workspace-stat-card" onClick={() => onNavigate('calendar')}><CalendarDays /><span>日历与提醒</span><strong>已启用</strong><small>AI 可在对话中参考你的近期安排</small></button>
       </div>
 
       <div className="workspace-grid">

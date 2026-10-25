@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist', 'node_modules'] },
+  { ignores: ['dist', 'node_modules', 'GPT-SoVITS-v3lora-20250228', 'runtime', 'searxng'] },
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {
