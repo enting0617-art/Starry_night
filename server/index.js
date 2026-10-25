@@ -17,13 +17,14 @@ import { applyNotebookCommands, findNotebookNotes, listNotebookNotes, removeNote
 import { createSearchRouter, runSearchAgent } from './search/search-tools.js';
 import { buildShortTermContext } from './context-memory.js';
 import { getCompanionPreferences, markProactiveMessage, shouldSendProactiveMessage, updateCompanionPreferences } from './companion-state.js';
-import { applyTaskUpdates, createTask, getActiveTaskContext, getTask, listTasks, removeTask, setTaskWorkspace, updateTask } from './task-store.js';
-import { createCalendarEvent, listCalendarEvents, listCalendarReminders, removeCalendarEvent, takeDueCalendarNotifications, updateCalendarEvent, updateCalendarReminder } from './calendar-store.js';
+import { applyTaskUpdates, createTask, getActiveTaskContext, getTask, listTasks, removeTask, saveTaskMessages, setTaskWorkspace, updateTask } from './task-store.js';
+import { createCalendarEvent, createCalendarEvents, listCalendarEvents, listCalendarReminders, removeCalendarEvent, takeDueCalendarNotifications, updateCalendarEvent, updateCalendarReminder } from './calendar-store.js';
 import { buildCalendarContext, calendarContextWindow } from './calendar-context.js';
 import { getPythonSandboxStatus, runPythonInSandbox } from './python-sandbox.js';
 import { startReminderScheduler } from './reminder-scheduler.js';
-import { applyWorkspaceActions, authorizeWorkspace, buildInboxContext, buildWorkspaceContext, inboxPath, listInboxFiles, openFolder } from './workspace-service.js';
+import { applyWorkspaceActions, authorizeWorkspace, buildInboxContext, buildWorkspaceContext, createInboxTaskFolder, inboxPath, listInboxFiles, openFolder } from './workspace-service.js';
 import { startMemoryMaintenanceScheduler } from './memory-maintenance.js';
+import { countValidCalendarProposals, expectedCalendarProposalCount, repairMissingCalendarProposals } from './calendar-proposal-repair.js';
 
 const app = express();
 app.use(express.json({ limit: '12mb' }));
@@ -126,8 +127,18 @@ app.put('/api/companion/preferences', (request, response) => response.json(updat
 
 app.get('/api/tasks', (request, response) => response.json({ tasks: listTasks(request.query.conversationId) }));
 
-app.post('/api/tasks', (request, response, next) => {
-  try { response.status(201).json({ task: createTask(request.body || {}) }); } catch (error) { next(error); }
+app.post('/api/tasks', async (request, response, next) => {
+  try {
+    const workspacePath = await createInboxTaskFolder(request.body?.title);
+    response.status(201).json({ task: createTask({ ...(request.body || {}), workspacePath }) });
+  } catch (error) { next(error); }
+});
+
+app.put('/api/tasks/:id/messages', (request, response, next) => {
+  try {
+    const task = saveTaskMessages(request.params.id, request.body?.messages);
+    response.status(task ? 200 : 404).json({ task });
+  } catch (error) { next(error); }
 });
 
 app.patch('/api/tasks/:id', (request, response, next) => {
@@ -181,6 +192,10 @@ app.get('/api/calendar/events', (request, response, next) => {
 
 app.post('/api/calendar/events', (request, response, next) => {
   try { response.status(201).json({ event: createCalendarEvent(request.body || {}) }); } catch (error) { next(error); }
+});
+
+app.post('/api/calendar/events/batch', (request, response, next) => {
+  try { response.status(201).json({ events: createCalendarEvents(request.body?.events || []) }); } catch (error) { next(error); }
 });
 
 app.patch('/api/calendar/events/:id', (request, response, next) => {
@@ -453,7 +468,7 @@ app.post('/api/chat', async (request, response, next) => {
 
   try {
     const config = await loadConfig();
-    const { model, messages, systemPrompt, temperature, webSearch, conversationId } = request.body || {};
+    const { model, messages, systemPrompt, temperature, webSearch, conversationId, projectId } = request.body || {};
     if (!model || !Array.isArray(messages)) {
       return response.status(400).json({ error: '缺少模型或聊天内容。' });
     }
@@ -509,7 +524,11 @@ app.post('/api/chat', async (request, response, next) => {
     const localClock = new Intl.DateTimeFormat('zh-CN', {
       timeZone: config.webSearch.timeZone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     }).format(now);
-    const clockContext = `后台本机时钟：${localClock}（时区：${config.webSearch.timeZone}；UTC：${now.toISOString()}）。用户询问当前时间或日期时，直接依据这里回答，并明确时区；不要改成北京时间，除非用户明确询问北京时间。你可以为用户准备日程和提醒草案，但不能直接创建。用户明确要求新建日程、安排时间或设置提醒时：若日期、开始时间或标题存在实质歧义，先自然追问；信息充分时，先用自然语言简要复述，然后在正文结束、表情标记之前输出一个日程草案块：[[CALENDAR_PROPOSAL]]{"title":"简短标题","description":"可选说明","startAt":"带时区偏移的 ISO 8601 时间","endAt":"带时区偏移的 ISO 8601 时间","timezone":"${config.webSearch.timeZone}","allDay":false,"remindBeforeMinutes":10}[[/CALENDAR_PROPOSAL]]。普通定时日程如果用户没说持续时间，默认一小时；如果用户只说“提醒我”但没说提前多久，则提醒时间设为事件开始时，即 remindBeforeMinutes 为 0。全天日程使用当地日期的午夜作为起止时间，结束日期为下一天。每轮最多一个草案。不要声称已经创建；界面会显示确认卡，只有用户点击确认后才会保存。`;
+    const expectedProposalCount = expectedCalendarProposalCount(messages);
+    const calendarCountContext = expectedProposalCount > 1
+      ? `系统从用户最近提供的原始内容中识别到 ${expectedProposalCount} 项待建日程。本轮必须输出恰好 ${expectedProposalCount} 个有效且互不重复的 [[CALENDAR_PROPOSAL]] 草案块，不能只在正文中声称已生成。`
+      : '';
+    const clockContext = `后台本机时钟：${localClock}（时区：${config.webSearch.timeZone}；UTC：${now.toISOString()}）。用户询问当前时间或日期时，直接依据这里回答，并明确时区；不要改成北京时间，除非用户明确询问北京时间。你可以为用户准备日程和提醒草案，但不能直接创建。用户明确要求新建日程、安排时间或设置提醒时：若日期、开始时间或标题存在实质歧义，先自然追问；信息充分时，先用自然语言简要复述。每条日程分别输出一个草案块：[[CALENDAR_PROPOSAL]]{"title":"简短标题","description":"可选说明","kind":"event或deadline","startAt":"带时区偏移的 ISO 8601 时间","endAt":"普通事件的 ISO 8601 结束时间","timezone":"${config.webSearch.timeZone}","allDay":false,"remindBeforeMinutes":10}[[/CALENDAR_PROPOSAL]]。用户一次提供多项安排时，必须为每一项输出独立草案块，每轮最多 20 条。带 Due、deadline、截止、提交时限的作业或测验必须使用 kind:"deadline"：startAt 就是唯一截止时间点，不要把提前提醒时间当作开始时间，endAt 可省略；提前量只写在 remindBeforeMinutes。普通会议、课程、学习计划使用 kind:"event" 并提供开始和结束时间，如果用户没说持续时间则默认一小时。如果用户只说“提醒我”但没说提前多久，则 remindBeforeMinutes 为 0。全天日程使用当地日期的午夜作为起止时间，结束日期为下一天。不要声称已经创建；界面会显示单项确认与全部确认按钮，只有用户确认后才会保存。`;
     const calendarWindow = calendarContextWindow(latestUserText, now);
     const calendarEvents = listCalendarEvents({ ...calendarWindow, limit: calendarWindow.limit + 1 });
     const calendarContext = buildCalendarContext(calendarEvents, {
@@ -520,8 +539,13 @@ app.post('/api/chat', async (request, response, next) => {
     });
     const emojiCandidates = config.emoji.assistantEnabled ? findAssistantEmojiCandidates(latestUserText, config.emoji.assistantCandidateCount) : [];
     const emojiContext = emojiCandidates.length ? `${config.emoji.assistantAlwaysSend ? '每一条正常回复都必须从候选列表选择一张真实表情包，不能省略。' : '仅在确实适合当前语气时选择一张表情包。'}只能从下面列表选择一个，并在完整正文全部结束后另起最后一行写 [[EMOJI:序号]]，标记后绝对不能再写任何文字。每次恰好一个，不得编造序号。禁止使用 Unicode 绘文字或“小黄豆”表情，例如笑脸、月亮、爱心等字符；情绪只能通过本地表情包表达。只有实际输出了有效标记时才能在正文中说自己发送了表情。正文中禁止书写“星空发送的表情含义”“助手发送的表情含义”等说明，禁止自己描述、假设或创造列表之外的表情，禁止输出表情图片链接或 Markdown 图片；界面会根据真实序号显示图片。\n可用表情：\n${emojiCandidates.map((item) => `- ${item.id}: ${item.description}`).join('\n')}` : '';
-    const activeTask = getActiveTaskContext(conversationId);
-    const inboxContext = await buildInboxContext();
+    const activeTask = projectId ? getTask(projectId) : getActiveTaskContext(conversationId);
+    const inboxQuery = messages
+      .filter((message) => message.role === 'user')
+      .slice(-6)
+      .map((message) => String(message.content || ''))
+      .join('\n');
+    const inboxContext = await buildInboxContext(inboxQuery);
     const workspaceSnapshot = activeTask?.workspacePath ? await buildWorkspaceContext(activeTask.workspacePath) : '';
     const workspaceContext = activeTask?.workspacePath
       ? `${workspaceSnapshot}\n你可以读取上面列出的工作区内容，并在此目录内创建子文件夹、创建或更新文本文件。确实需要写入时，在正文结束、表情标记之前输出一个操作块：[[WORKSPACE_ACTIONS]]{"actions":[{"type":"mkdir","path":"相对目录"},{"type":"write","path":"相对文件.txt","content":"完整文本内容"}]}[[/WORKSPACE_ACTIONS]]。路径必须相对于工作目录，不得使用绝对路径或 ..，每轮最多 12 项；只允许 mkdir 和 write，不允许删除、运行程序或访问目录外内容。操作块不会展示给用户，系统会在已授权目录内执行。`
@@ -533,7 +557,7 @@ app.post('/api/chat', async (request, response, next) => {
     const taskContext = activeTask
       ? `当前有一项持续任务。目标：${activeTask.goal}\n当前状态：${activeTask.currentState || '尚未写入'}\n下一步：${activeTask.nextStep || '尚未写入'}\n请围绕任务给出真实进展；完成、遇到阻塞或产生明确下一步时，在正文结束、表情标记之前另起一行输出 [[TASK_UPDATE:active|简短当前状态|下一步]]。状态只能是 active、blocked 或 done。该标记不会显示给用户。不要把闲聊强行变成任务，也不要虚构执行过的操作。`
       : '';
-    const completePrompt = [config.companion.persona, prompt, clockContext, calendarContext, inboxContext, workspaceContext, notebookContext, memoryContext, taskContext, pythonContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
+    const completePrompt = [config.companion.persona, prompt, clockContext, calendarCountContext, calendarContext, inboxContext, workspaceContext, notebookContext, memoryContext, taskContext, pythonContext, searchContext, emojiContext].filter(Boolean).join('\n\n');
     const shortTerm = buildShortTermContext({ conversationId, messages });
     const shortTermContext = shortTerm.summary
       ? `本次对话较早部分的压缩摘要（仅用于保持上下文，不要提及此摘要）：\n${shortTerm.summary}`
@@ -616,6 +640,23 @@ app.post('/api/chat', async (request, response, next) => {
       const chunk = JSON.parse(buffer);
       assistantText += chunk.message?.content || '';
       response.write(`${buffer}\n`);
+    }
+    if (expectedProposalCount > 1) {
+      const existingCount = countValidCalendarProposals(assistantText, config.webSearch.timeZone);
+      if (existingCount < expectedProposalCount) {
+        const repaired = await repairMissingCalendarProposals({ assistantText, expectedCount: expectedProposalCount, messages, model, config, localClock });
+        if (repaired) {
+          const addition = `\n${repaired}`;
+          assistantText += addition;
+          response.write(`${JSON.stringify({ model, message: { role: 'assistant', content: addition }, done: false })}\n`);
+        }
+      }
+      const finalCount = countValidCalendarProposals(assistantText, config.webSearch.timeZone);
+      if (finalCount < expectedProposalCount) {
+        const warning = `\n（检测到原始内容有 ${expectedProposalCount} 项，但模型只生成了 ${finalCount} 条有效日程草案；请勿将缺失项视为已创建。）`;
+        assistantText += warning;
+        response.write(`${JSON.stringify({ model, message: { role: 'assistant', content: warning }, done: false })}\n`);
+      }
     }
     const selectedIds = [...assistantText.matchAll(/\[\[EMOJI:(\d+)\]\]/giu)].map((match) => Number(match[1]));
     const hasValidEmoji = selectedIds.some((id) => emojiCandidates.some((candidate) => candidate.id === id));

@@ -21,12 +21,15 @@ database.exec(`
 `);
 const taskColumns = new Set(database.prepare('PRAGMA table_info(companion_tasks)').all().map((column) => column.name));
 if (!taskColumns.has('workspace_path')) database.exec('ALTER TABLE companion_tasks ADD COLUMN workspace_path TEXT');
+if (!taskColumns.has('messages_json')) database.exec("ALTER TABLE companion_tasks ADD COLUMN messages_json TEXT NOT NULL DEFAULT '[]'");
 
 function clean(value, limit) {
   return String(value || '').replace(/\s+/gu, ' ').trim().slice(0, limit);
 }
 
 function row(item) {
+  let messages;
+  try { messages = JSON.parse(item.messages_json || '[]'); } catch { messages = []; }
   return {
     id: item.id,
     conversationId: item.conversation_id,
@@ -36,6 +39,8 @@ function row(item) {
     currentState: item.current_state,
     nextStep: item.next_step,
     workspacePath: item.workspace_path || '',
+    chatConversationId: `task-${item.id}`,
+    messages: Array.isArray(messages) ? messages : [],
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
@@ -53,14 +58,16 @@ export function createTask(value = {}) {
   const conversationId = clean(value.conversationId, 100);
   if (!conversationId || !goal) throw new Error('任务需要关联当前对话，并填写目标。');
   const now = new Date().toISOString();
+  const title = clean(value.title, 120);
+  if (!/^[A-Za-z][A-Za-z0-9_-]{1,63}$/u.test(title)) throw new Error('任务英文名必须以字母开头，只能包含英文字母、数字、- 和 _，长度为 2–64 个字符。');
   const item = {
-    id: globalThis.crypto.randomUUID(), conversationId, title: clean(value.title, 120) || goal.slice(0, 36), goal,
-    status: 'active', currentState: clean(value.currentState, 1000), nextStep: clean(value.nextStep, 500), createdAt: now, updatedAt: now,
+    id: globalThis.crypto.randomUUID(), conversationId, title, goal,
+    status: 'active', currentState: clean(value.currentState, 1000), nextStep: clean(value.nextStep, 500), workspacePath: clean(value.workspacePath, 1000), messages: [], createdAt: now, updatedAt: now,
   };
-  database.prepare(`INSERT INTO companion_tasks (id, conversation_id, title, goal, status, current_state, next_step, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(item.id, item.conversationId, item.title, item.goal, item.status, item.currentState, item.nextStep, item.createdAt, item.updatedAt);
-  return item;
+  database.prepare(`INSERT INTO companion_tasks (id, conversation_id, title, goal, status, current_state, next_step, workspace_path, messages_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(item.id, item.conversationId, item.title, item.goal, item.status, item.currentState, item.nextStep, item.workspacePath, '[]', item.createdAt, item.updatedAt);
+  return row(database.prepare('SELECT * FROM companion_tasks WHERE id = ?').get(item.id));
 }
 
 export function updateTask(id, changes = {}) {
@@ -99,8 +106,23 @@ export function getTask(id) {
 }
 
 export function getActiveTaskContext(conversationId) {
-  const task = database.prepare("SELECT * FROM companion_tasks WHERE conversation_id = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1").get(String(conversationId || ''));
+  const task = database.prepare("SELECT * FROM companion_tasks WHERE (conversation_id = ? OR ('task-' || id) = ?) AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1").get(String(conversationId || ''), String(conversationId || ''));
   return task ? row(task) : null;
+}
+
+export function saveTaskMessages(id, messages) {
+  if (!Array.isArray(messages)) throw new Error('任务对话格式无效。');
+  const cleaned = messages.slice(-200).map((message) => ({
+    id: clean(message.id, 100) || globalThis.crypto.randomUUID(),
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: String(message.content || '').slice(0, 50000),
+    model: clean(message.model, 120),
+    createdAt: Number(message.createdAt) || Date.now(),
+  }));
+  const updatedAt = new Date().toISOString();
+  const result = database.prepare('UPDATE companion_tasks SET messages_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(cleaned), updatedAt, String(id));
+  return result.changes ? row(database.prepare('SELECT * FROM companion_tasks WHERE id = ?').get(String(id))) : null;
 }
 
 export function applyTaskUpdates(conversationId, output) {

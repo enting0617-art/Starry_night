@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, FolderOpen, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, FolderOpen, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Plus, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
@@ -9,7 +9,8 @@ import TaskPanel from './TaskPanel.jsx';
 import WorkspaceDashboard from './WorkspaceDashboard.jsx';
 import WorkspaceRecords from './WorkspaceRecords.jsx';
 import CalendarPage from './CalendarPage.jsx';
-import { extractCalendarProposal, findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
+import CalendarProposalGroup from './CalendarProposalGroup.jsx';
+import { extractCalendarProposals, findSelectedAssistantEmoji, sanitizeAssistantContent } from './chat-format.js';
 
 const STORAGE_KEY = 'portable-ollama-chat:v1';
 
@@ -28,8 +29,8 @@ function sanitizeConversations(conversations) {
   }));
 }
 
-function newConversation() {
-  return { id: uid(), title: '新对话', messages: [], updatedAt: Date.now() };
+function newConversation(projectId = '') {
+  return { id: uid(), title: '新对话', projectId, messages: [], updatedAt: Date.now() };
 }
 
 function loadSaved() {
@@ -68,6 +69,7 @@ export default function App() {
   const [voiceLoadingId, setVoiceLoadingId] = useState(null);
   const [memories, setMemories] = useState([]);
   const [notebookNotes, setNotebookNotes] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [emojis, setEmojis] = useState([]);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState('');
@@ -87,10 +89,20 @@ export default function App() {
   const voiceAbortRef = useRef(null);
   const voicePlaybackIdRef = useRef(0);
   const bottomRef = useRef(null);
+  const composerInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const historySaveTimerRef = useRef(null);
   const historySnapshotRef = useRef({ conversations: initial.conversations, activeId: initial.activeId });
   const proactiveCheckingRef = useRef(false);
+
+  useEffect(() => {
+    const textarea = composerInputRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const nextHeight = Math.min(textarea.scrollHeight, 240);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 240 ? 'auto' : 'hidden';
+  }, [input]);
 
   const active = conversations.find((item) => item.id === activeId) || conversations[0];
   const activeConversationId = active?.id;
@@ -281,17 +293,61 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [refreshModels]);
 
+  useEffect(() => {
+    fetch('/api/tasks').then((response) => response.json()).then((data) => setProjects(data.tasks || [])).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const open = (event) => {
+      const projectId = event.detail?.projectId;
+      if (!projectId) return;
+      setConversations((items) => {
+        const existing = items.find((conversation) => conversation.projectId === projectId);
+        if (existing) { setActiveId(existing.id); return items; }
+        const conversation = newConversation(projectId);
+        setActiveId(conversation.id);
+        return [conversation, ...items];
+      });
+      setMode('companion'); setView('chat');
+    };
+    const created = (event) => {
+      const project = event.detail?.project;
+      if (!project) return;
+      setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]);
+      open(new CustomEvent('starry:open-project', { detail: { projectId: project.id } }));
+    };
+    const removed = (event) => {
+      const projectId = event.detail?.projectId;
+      if (!projectId) return;
+      setProjects((items) => items.filter((project) => project.id !== projectId));
+      setConversations((items) => items.map((conversation) => conversation.projectId === projectId ? { ...conversation, projectId: '' } : conversation));
+    };
+    window.addEventListener('starry:open-project', open);
+    window.addEventListener('starry:project-created', created);
+    window.addEventListener('starry:project-removed', removed);
+    return () => { window.removeEventListener('starry:open-project', open); window.removeEventListener('starry:project-created', created); window.removeEventListener('starry:project-removed', removed); };
+  }, []);
+
   function updateConversation(id, updater) {
     setConversations((items) => items.map((item) => item.id === id ? updater(item) : item));
   }
 
-  function createChat() {
+  function createChat(projectId = '') {
     stopVoice();
-    const conversation = newConversation();
+    const conversation = newConversation(projectId);
     setConversations((items) => [conversation, ...items]);
     setActiveId(conversation.id);
     setInput('');
     setSelectedImage(null);
+  }
+
+  function openProject(projectId) {
+    const existing = conversations.find((conversation) => conversation.projectId === projectId);
+    if (existing) {
+      stopVoice(); setActiveId(existing.id); setMode('companion'); setView('chat');
+    } else {
+      createChat(projectId); setMode('companion'); setView('chat');
+    }
   }
 
   async function selectImage(event) {
@@ -395,6 +451,69 @@ export default function App() {
     updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, calendarProposalStatus: 'dismissed' } : message), updatedAt: timestamp() }));
   }
 
+  function updateCalendarProposalState(conversationId, messageId, index, status, error = '', eventId = '') {
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const statuses = [...(message.calendarProposalStatuses || message.calendarProposals.map(() => 'pending'))];
+        const errors = [...(message.calendarProposalErrors || message.calendarProposals.map(() => ''))];
+        const eventIds = [...(message.calendarEventIds || message.calendarProposals.map(() => ''))];
+        statuses[index] = status;
+        errors[index] = error;
+        if (eventId) eventIds[index] = eventId;
+        return { ...message, calendarProposalStatuses: statuses, calendarProposalErrors: errors, calendarEventIds: eventIds };
+      }),
+      updatedAt: timestamp(),
+    }));
+  }
+
+  async function confirmCalendarProposalAt(conversationId, messageId, index, proposal) {
+    updateCalendarProposalState(conversationId, messageId, index, 'saving');
+    try {
+      const response = await fetch('/api/calendar/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proposal) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '创建日程失败');
+      updateCalendarProposalState(conversationId, messageId, index, 'created', '', data.event.id);
+    } catch (error) {
+      updateCalendarProposalState(conversationId, messageId, index, 'error', error.message);
+    }
+  }
+
+  async function confirmAllCalendarProposals(conversationId, messageId, actionable) {
+    const indexes = actionable.map((item) => item.index);
+    updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => {
+      if (message.id !== messageId) return message;
+      const statuses = [...(message.calendarProposalStatuses || message.calendarProposals.map(() => 'pending'))];
+      indexes.forEach((index) => { statuses[index] = 'saving'; });
+      return { ...message, calendarProposalStatuses: statuses, calendarBatchSaving: true };
+    }) }));
+    try {
+      const response = await fetch('/api/calendar/events/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: actionable.map((item) => item.proposal) }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '批量创建日程失败');
+      updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const statuses = [...message.calendarProposalStatuses];
+        const eventIds = [...(message.calendarEventIds || message.calendarProposals.map(() => ''))];
+        indexes.forEach((index, offset) => { statuses[index] = 'created'; eventIds[index] = data.events[offset]?.id || ''; });
+        return { ...message, calendarProposalStatuses: statuses, calendarEventIds: eventIds, calendarBatchSaving: false };
+      }), updatedAt: timestamp() }));
+    } catch (error) {
+      updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const statuses = [...message.calendarProposalStatuses];
+        const errors = [...(message.calendarProposalErrors || message.calendarProposals.map(() => ''))];
+        indexes.forEach((index) => { statuses[index] = 'error'; errors[index] = error.message; });
+        return { ...message, calendarProposalStatuses: statuses, calendarProposalErrors: errors, calendarBatchSaving: false };
+      }) }));
+    }
+  }
+
+  function dismissCalendarProposalAt(conversationId, messageId, index) {
+    updateCalendarProposalState(conversationId, messageId, index, 'dismissed');
+  }
+
   useEffect(() => {
     if (!historyReady || !activeConversationId || !model || generating || !proactive.enabled) return undefined;
     let cancelled = false;
@@ -458,7 +577,7 @@ export default function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: visualModel, messages: requestMessages, conversationId, systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled }),
+        body: JSON.stringify({ model: visualModel, messages: requestMessages, conversationId, projectId: active.projectId || '', systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -525,11 +644,11 @@ export default function App() {
       if (buffer.trim()) handleChunk(JSON.parse(buffer));
       if (!assistantText.trim()) throw new Error(thinkingText ? '模型完成了思考，但没有返回最终回答。请重试或更换模型。' : 'Ollama 已结束连接，但没有返回任何内容。');
       const assistantEmoji = findSelectedAssistantEmoji(assistantText, emojis);
-      const calendarProposal = extractCalendarProposal(assistantText);
+      const calendarProposals = extractCalendarProposals(assistantText);
       const cleanAssistantText = sanitizeAssistantContent(assistantText);
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
-        messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: cleanAssistantText, emojiId: assistantEmoji?.id || null, emojiDescription: assistantEmoji?.description || null, calendarProposal, calendarProposalStatus: calendarProposal ? 'pending' : undefined } : message),
+        messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: cleanAssistantText, emojiId: assistantEmoji?.id || null, emojiDescription: assistantEmoji?.description || null, calendarProposals, calendarProposalStatuses: calendarProposals.map(() => 'pending') } : message),
       }));
       if (autoSpeak && cleanAssistantText) playVoice(assistantMessage.id, cleanAssistantText);
       setTimeout(() => {
@@ -581,10 +700,11 @@ export default function App() {
           </nav>
           <button className="workspace-return" onClick={() => openWorkspace('companion')}><Sparkles size={17} />返回陪伴模式</button>
         </> : <>
-          <button className="new-chat" onClick={createChat}><MessageSquarePlus size={18} /> 新对话</button>
+          <button className="new-chat" onClick={() => createChat()}><MessageSquarePlus size={18} /> 新对话</button>
+          {projects.length > 0 && <><div className="history-label">项目</div><div className="project-list">{projects.map((project) => <section key={project.id} className="sidebar-project"><header><button onClick={() => openProject(project.id)}><FolderOpen size={15} /><strong>{project.title}</strong></button><button className="project-new-chat" onClick={() => createChat(project.id)} aria-label={`在 ${project.title} 中新建对话`}><Plus size={14} /></button></header>{conversations.filter((conversation) => conversation.projectId === project.id).map((conversation) => <button key={conversation.id} className={`project-chat ${conversation.id === activeId ? 'active' : ''}`} onClick={() => { stopVoice(); setActiveId(conversation.id); }}><span>{conversation.title}</span><Trash2 size={13} onClick={(event) => removeChat(event, conversation.id)} /></button>)}</section>)}</div></>}
           <div className="history-label">最近对话</div>
           <div className="history-list">
-            {conversations.map((conversation) => (
+            {conversations.filter((conversation) => !conversation.projectId).map((conversation) => (
               <button key={conversation.id} className={`history-item ${conversation.id === activeId ? 'active' : ''}`} onClick={() => { stopVoice(); setActiveId(conversation.id); }}>
                 <span>{conversation.title}</span>
                 <Trash2 className="delete-chat" size={15} onClick={(event) => removeChat(event, conversation.id)} />
@@ -642,7 +762,7 @@ export default function App() {
           </section></div>
         )}
 
-        {mode === 'workspace' ? <>{workspaceSection === 'dashboard' ? <WorkspaceDashboard companionName={config.companion?.name} conversations={conversations} memories={memories} notes={notebookNotes} status={status} onNavigate={openWorkspace} /> : workspaceSection === 'calendar' ? <CalendarPage theme={theme} /> : workspaceSection === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : workspaceSection === 'memory' ? <WorkspaceRecords kind="memory" items={memories} onPin={toggleMemoryPin} onEdit={updateMemoryEntry} onRemove={removeMemoryEntry} /> : workspaceSection === 'notes' ? <WorkspaceRecords kind="notes" items={notebookNotes} onPin={toggleNotebookPin} onEdit={updateNotebookEntry} onRemove={removeNotebookEntry} /> : workspaceSection === 'vision' ? <VisionPanel config={config} /> : <DebugPanel models={models} />}</> : view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} /> : <><section className="conversation">
+        {mode === 'workspace' ? <>{workspaceSection === 'dashboard' ? <WorkspaceDashboard companionName={config.companion?.name} conversations={conversations} memories={memories} notes={notebookNotes} status={status} onNavigate={openWorkspace} /> : workspaceSection === 'calendar' ? <CalendarPage theme={theme} /> : workspaceSection === 'tasks' ? <TaskPanel conversationId={activeConversationId} model={model} config={config} webSearchEnabled={webSearchEnabled} /> : workspaceSection === 'memory' ? <WorkspaceRecords kind="memory" items={memories} onPin={toggleMemoryPin} onEdit={updateMemoryEntry} onRemove={removeMemoryEntry} /> : workspaceSection === 'notes' ? <WorkspaceRecords kind="notes" items={notebookNotes} onPin={toggleNotebookPin} onEdit={updateNotebookEntry} onRemove={removeNotebookEntry} /> : workspaceSection === 'vision' ? <VisionPanel config={config} /> : <DebugPanel models={models} />}</> : view === 'debug' ? <DebugPanel models={models} /> : view === 'vision' ? <VisionPanel config={config} /> : view === 'tasks' ? <TaskPanel conversationId={activeConversationId} model={model} config={config} webSearchEnabled={webSearchEnabled} /> : <><section className="conversation">
           {!active?.messages.length ? (
             <div className="welcome">
               <CompanionAvatar state={speaking ? 'speaking' : generating ? 'thinking' : 'idle'} name={config.companion?.name} />
@@ -659,6 +779,7 @@ export default function App() {
                   <div className="message-content">
                     <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}{message.workspaceResult && <span className="searched-badge"><FolderOpen size={11} />{message.workspaceResult.error ? '文件操作失败' : `已处理 ${message.workspaceResult.applied || 0} 项文件`}</span>}</div>
                     {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.calendarProposal && message.calendarProposalStatus !== 'dismissed' && <section className={`calendar-proposal ${message.calendarProposalStatus || 'pending'}`}><header><CalendarDays size={17} /><div><strong>{message.calendarProposal.title}</strong><span>{message.calendarProposalStatus === 'created' ? '已写入星空日历' : '等待你确认'}</span></div></header><p>{new Date(message.calendarProposal.startAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })} — {new Date(message.calendarProposal.endAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })}</p>{message.calendarProposal.description && <small>{message.calendarProposal.description}</small>}<small>{message.calendarProposal.remindBeforeMinutes === null ? '不提醒' : message.calendarProposal.remindBeforeMinutes === 0 ? '开始时提醒' : `提前 ${message.calendarProposal.remindBeforeMinutes} 分钟提醒`} · {message.calendarProposal.timezone}</small>{message.calendarProposalError && <em>{message.calendarProposalError}</em>}{message.calendarProposalStatus !== 'created' && <footer><button type="button" onClick={() => dismissCalendarProposal(active.id, message.id)} disabled={message.calendarProposalStatus === 'saving'}>暂不创建</button><button type="button" className="confirm" onClick={() => confirmCalendarProposal(active.id, message.id, message.calendarProposal)} disabled={message.calendarProposalStatus === 'saving'}>{message.calendarProposalStatus === 'saving' ? '正在创建…' : message.calendarProposalStatus === 'error' ? '重试创建' : '确认创建'}</button></footer>}</section>}{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.pythonSandbox && <details className="sandbox-result"><summary>Python 隔离运行 {message.pythonSandbox.ran && message.pythonSandbox.exitCode === 0 ? '完成' : '未执行或失败'}</summary><p>{message.pythonSandbox.ran ? '已在 Windows 原生 AppContainer + Job Object 沙盒中执行。' : '未在宿主机执行。'}</p>{message.pythonSandbox.audit?.errors?.length ? <pre>{message.pythonSandbox.audit.errors.join('\n')}</pre> : null}{message.pythonSandbox.error ? <pre>{message.pythonSandbox.error}</pre> : null}{message.pythonSandbox.stdout ? <pre>{message.pythonSandbox.stdout}</pre> : null}{message.pythonSandbox.stderr ? <pre>{message.pythonSandbox.stderr}</pre> : null}</details>}{message.searchedWeb && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences?.length || 0}）</summary><div className="search-reference-list">{message.searchReferences?.length ? message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>) : <span className="search-reference-empty">{message.searchError ? `搜索未成功：${message.searchError}` : '本次搜索没有返回可引用的公开资料。'}</span>}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
+                    {message.role === 'assistant' && message.calendarProposals?.length > 0 && <CalendarProposalGroup message={message} onConfirm={(index, proposal) => confirmCalendarProposalAt(active.id, message.id, index, proposal)} onConfirmAll={(actionable) => confirmAllCalendarProposals(active.id, message.id, actionable)} onDismiss={(index) => dismissCalendarProposalAt(active.id, message.id, index)} />}
                   </div>
                 </article>
               ))}
@@ -681,7 +802,7 @@ export default function App() {
             <button type="button" className={`composer-tool ${emojiPickerOpen ? 'active' : ''}`} onClick={() => setEmojiPickerOpen((value) => !value)} aria-label="选择表情"><SmilePlus size={20} /></button>
             <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={selectImage} />
             <button type="button" className={`composer-tool ${selectedImage ? 'active' : ''}`} onClick={() => imageInputRef.current?.click()} disabled={imageUploading || generating} aria-label="上传图片" title="让本地模型看图"><ImagePlus size={20} /></button>
-            <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
+            <textarea ref={composerInputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
             }} placeholder={model ? `向 ${model} 发送消息…` : '请先启动 Ollama 并安装模型'} disabled={!model || generating} rows="1" />
             {generating ? (

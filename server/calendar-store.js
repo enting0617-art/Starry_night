@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { projectRoot } from './config.js';
 
-const database = new DatabaseSync(join(projectRoot, 'data', 'chat.sqlite'));
+const database = new DatabaseSync(process.env.STARRY_CALENDAR_DB_PATH || join(projectRoot, 'data', 'chat.sqlite'));
+database.exec('PRAGMA busy_timeout = 5000');
 database.exec('PRAGMA foreign_keys = ON');
 database.exec(`
   CREATE TABLE IF NOT EXISTS calendar_events (
@@ -13,6 +14,7 @@ database.exec(`
     end_at TEXT NOT NULL,
     timezone TEXT NOT NULL,
     all_day INTEGER NOT NULL DEFAULT 0,
+    event_kind TEXT NOT NULL DEFAULT 'event',
     recurrence_rule TEXT,
     linked_task_id TEXT,
     created_at TEXT NOT NULL,
@@ -29,6 +31,8 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
   CREATE INDEX IF NOT EXISTS idx_calendar_reminders_due ON calendar_reminders(status, fire_at);
 `);
+const eventColumns = new Set(database.prepare('PRAGMA table_info(calendar_events)').all().map((column) => column.name));
+if (!eventColumns.has('event_kind')) database.exec("ALTER TABLE calendar_events ADD COLUMN event_kind TEXT NOT NULL DEFAULT 'event'");
 
 function clean(value, limit) {
   return String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, limit);
@@ -49,6 +53,7 @@ function row(item) {
     endAt: item.end_at,
     timezone: item.timezone,
     allDay: Boolean(item.all_day),
+    kind: item.event_kind === 'deadline' ? 'deadline' : 'event',
     recurrenceRule: item.recurrence_rule,
     linkedTaskId: item.linked_task_id,
     remindBeforeMinutes: item.remind_before_minutes ?? null,
@@ -71,7 +76,10 @@ const selectEvents = `
 function normalize(value, existing = null) {
   const title = clean(value.title ?? existing?.title, 160);
   const startAt = iso(value.startAt ?? existing?.startAt, '开始时间');
-  const endAt = iso(value.endAt ?? existing?.endAt, '结束时间');
+  const kind = (value.kind ?? existing?.kind) === 'deadline' ? 'deadline' : 'event';
+  const endAt = kind === 'deadline'
+    ? new Date(new Date(startAt).getTime() + 1000).toISOString()
+    : iso(value.endAt ?? existing?.endAt, '结束时间');
   if (!title) throw new Error('请填写日程标题。');
   if (new Date(endAt) <= new Date(startAt)) throw new Error('结束时间必须晚于开始时间。');
   const rawReminder = Object.hasOwn(value, 'remindBeforeMinutes') ? value.remindBeforeMinutes : existing?.remindBeforeMinutes;
@@ -88,6 +96,7 @@ function normalize(value, existing = null) {
     endAt,
     timezone: clean(value.timezone ?? existing?.timezone, 100) || 'UTC',
     allDay: Boolean(value.allDay ?? existing?.allDay),
+    kind,
     recurrenceRule: clean(value.recurrenceRule ?? existing?.recurrenceRule, 500) || null,
     linkedTaskId: clean(value.linkedTaskId ?? existing?.linkedTaskId, 100) || null,
     remindBeforeMinutes,
@@ -125,11 +134,36 @@ export function createCalendarEvent(value = {}) {
   const now = new Date().toISOString();
   const id = globalThis.crypto.randomUUID();
   database.prepare(`INSERT INTO calendar_events
-    (id, title, description, start_at, end_at, timezone, all_day, recurrence_rule, linked_task_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, item.title, item.description, item.startAt, item.endAt, item.timezone, Number(item.allDay), item.recurrenceRule, item.linkedTaskId, now, now);
+    (id, title, description, start_at, end_at, timezone, all_day, event_kind, recurrence_rule, linked_task_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, item.title, item.description, item.startAt, item.endAt, item.timezone, Number(item.allDay), item.kind, item.recurrenceRule, item.linkedTaskId, now, now);
   syncReminder(id, item.startAt, item.remindBeforeMinutes);
   return row(database.prepare(`${selectEvents} WHERE e.id = ?`).get(id));
+}
+
+export function createCalendarEvents(values = []) {
+  if (!Array.isArray(values) || !values.length) throw new Error('请至少提供一条日程。');
+  if (values.length > 20) throw new Error('一次最多创建 20 条日程。');
+  const items = values.map((value) => normalize(value));
+  const created = [];
+  database.exec('BEGIN');
+  try {
+    for (const item of items) {
+      const now = new Date().toISOString();
+      const id = globalThis.crypto.randomUUID();
+      database.prepare(`INSERT INTO calendar_events
+        (id, title, description, start_at, end_at, timezone, all_day, event_kind, recurrence_rule, linked_task_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, item.title, item.description, item.startAt, item.endAt, item.timezone, Number(item.allDay), item.kind, item.recurrenceRule, item.linkedTaskId, now, now);
+      syncReminder(id, item.startAt, item.remindBeforeMinutes);
+      created.push(row(database.prepare(`${selectEvents} WHERE e.id = ?`).get(id)));
+    }
+    database.exec('COMMIT');
+    return created;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function updateCalendarEvent(id, changes = {}) {
@@ -137,8 +171,8 @@ export function updateCalendarEvent(id, changes = {}) {
   if (!source) return null;
   const item = normalize(changes, row(source));
   const updatedAt = new Date().toISOString();
-  database.prepare(`UPDATE calendar_events SET title = ?, description = ?, start_at = ?, end_at = ?, timezone = ?, all_day = ?, recurrence_rule = ?, linked_task_id = ?, updated_at = ? WHERE id = ?`)
-    .run(item.title, item.description, item.startAt, item.endAt, item.timezone, Number(item.allDay), item.recurrenceRule, item.linkedTaskId, updatedAt, String(id));
+  database.prepare(`UPDATE calendar_events SET title = ?, description = ?, start_at = ?, end_at = ?, timezone = ?, all_day = ?, event_kind = ?, recurrence_rule = ?, linked_task_id = ?, updated_at = ? WHERE id = ?`)
+    .run(item.title, item.description, item.startAt, item.endAt, item.timezone, Number(item.allDay), item.kind, item.recurrenceRule, item.linkedTaskId, updatedAt, String(id));
   syncReminder(String(id), item.startAt, item.remindBeforeMinutes);
   return row(database.prepare(`${selectEvents} WHERE e.id = ?`).get(String(id)));
 }
@@ -186,4 +220,8 @@ export function listDueCalendarNotifications(now = new Date()) {
 export function markCalendarReminderDelivered(id, deliveredAt = new Date()) {
   return database.prepare("UPDATE calendar_reminders SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'pending'")
     .run(deliveredAt.toISOString(), String(id)).changes > 0;
+}
+
+export function closeCalendarStore() {
+  database.close();
 }

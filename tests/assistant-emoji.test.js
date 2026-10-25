@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCalendarProposal, findSelectedAssistantEmoji, sanitizeAssistantContent } from '../src/chat-format.js';
+import { extractCalendarProposal, extractCalendarProposals, findSelectedAssistantEmoji, sanitizeAssistantContent } from '../src/chat-format.js';
 
 test('recognizes a real emoji marker even when text follows it', () => {
   const text = '我发一个表情给你～ [[EMOJI:178]] 如果还想看，也可以告诉我。';
@@ -52,4 +52,25 @@ test('extracts and hides a valid calendar proposal', () => {
 test('rejects invalid calendar proposal ranges', () => {
   const text = '[[CALENDAR_PROPOSAL]]{"title":"错误日程","startAt":"2026-10-27T16:00:00Z","endAt":"2026-10-27T15:00:00Z"}[[/CALENDAR_PROPOSAL]]';
   assert.equal(extractCalendarProposal(text), null);
+});
+
+test('extracts multiple calendar proposals from one reply', () => {
+  const text = [
+    '已整理三条。',
+    '[[CALENDAR_PROPOSAL]]{"title":"Quiz 1","startAt":"2026-10-26T09:30:00-06:00","endAt":"2026-10-26T10:30:00-06:00"}[[/CALENDAR_PROPOSAL]]',
+    '[[CALENDAR_PROPOSAL]]{"title":"Assignment 2","startAt":"2026-10-27T08:00:00-06:00","endAt":"2026-10-27T09:00:00-06:00"}[[/CALENDAR_PROPOSAL]]',
+    '[[CALENDAR_PROPOSAL]]{"title":"Content Quiz","startAt":"2026-10-29T23:00:00-06:00","endAt":"2026-10-29T23:59:00-06:00"}[[/CALENDAR_PROPOSAL]]',
+  ].join('\n');
+  const proposals = extractCalendarProposals(text);
+  assert.deepEqual(proposals.map((item) => item.title), ['Quiz 1', 'Assignment 2', 'Content Quiz']);
+  assert.equal(sanitizeAssistantContent(text), '已整理三条。');
+});
+
+test('represents a due item as one deadline point', () => {
+  const text = '[[CALENDAR_PROPOSAL]]{"title":"Assignment Due","kind":"deadline","startAt":"2026-10-27T23:59:00-06:00","timezone":"America/Denver","remindBeforeMinutes":30}[[/CALENDAR_PROPOSAL]]';
+  const proposal = extractCalendarProposal(text);
+  assert.equal(proposal.kind, 'deadline');
+  assert.equal(proposal.startAt, '2026-10-28T05:59:00.000Z');
+  assert.equal(new Date(proposal.endAt) - new Date(proposal.startAt), 1000);
+  assert.equal(proposal.remindBeforeMinutes, 30);
 });

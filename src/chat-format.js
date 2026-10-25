@@ -19,15 +19,14 @@ export function sanitizeAssistantContent(text, { preserveEmojiMarkers = false } 
     .trim();
 }
 
-export function extractCalendarProposal(text) {
-  const match = String(text || '').match(/\[\[CALENDAR_PROPOSAL\]\]\s*([\s\S]*?)\s*\[\[\/CALENDAR_PROPOSAL\]\]/iu);
-  if (!match) return null;
+function parseCalendarProposal(source) {
   try {
-    const value = JSON.parse(match[1]);
+    const value = JSON.parse(source);
     const title = String(value.title || '').trim().slice(0, 160);
     const startAt = new Date(value.startAt);
-    const endAt = new Date(value.endAt);
-    const reminder = value.remindBeforeMinutes === null || value.remindBeforeMinutes === '' ? null : Number(value.remindBeforeMinutes);
+    const kind = value.kind === 'deadline' ? 'deadline' : 'event';
+    const endAt = kind === 'deadline' ? new Date(startAt.getTime() + 1000) : new Date(value.endAt);
+    const reminder = value.remindBeforeMinutes === null || value.remindBeforeMinutes === undefined || value.remindBeforeMinutes === '' ? null : Number(value.remindBeforeMinutes);
     if (!title || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) return null;
     if (reminder !== null && (!Number.isFinite(reminder) || reminder < 0 || reminder > 10080)) return null;
     return {
@@ -37,11 +36,23 @@ export function extractCalendarProposal(text) {
       endAt: endAt.toISOString(),
       timezone: String(value.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC').slice(0, 100),
       allDay: Boolean(value.allDay),
+      kind,
       remindBeforeMinutes: reminder,
     };
   } catch {
     return null;
   }
+}
+
+export function extractCalendarProposals(text) {
+  return [...String(text || '').matchAll(/\[\[CALENDAR_PROPOSAL\]\]\s*([\s\S]*?)\s*\[\[\/CALENDAR_PROPOSAL\]\]/giu)]
+    .map((match) => parseCalendarProposal(match[1]))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+export function extractCalendarProposal(text) {
+  return extractCalendarProposals(text)[0] || null;
 }
 
 export function findSelectedAssistantEmoji(text, emojis) {

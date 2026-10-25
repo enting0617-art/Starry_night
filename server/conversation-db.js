@@ -16,9 +16,11 @@ database.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
 `);
+const conversationColumns = new Set(database.prepare('PRAGMA table_info(conversations)').all().map((column) => column.name));
+if (!conversationColumns.has('project_id')) database.exec('ALTER TABLE conversations ADD COLUMN project_id TEXT');
 
 export function loadConversations() {
-  const conversations = database.prepare('SELECT id, title, messages_json AS messagesJson, updated_at AS updatedAt FROM conversations ORDER BY updated_at DESC').all()
+  const conversations = database.prepare('SELECT id, title, project_id AS projectId, messages_json AS messagesJson, updated_at AS updatedAt FROM conversations ORDER BY updated_at DESC').all()
     .map(({ messagesJson, ...row }) => {
       try { return { ...row, messages: JSON.parse(messagesJson) }; } catch { return { ...row, messages: [] }; }
     });
@@ -38,15 +40,16 @@ export async function saveConversations({ conversations, activeId }) {
     return {
       id: String(conversation.id).slice(0, 100),
       title: String(conversation.title || '新对话').slice(0, 120),
+      projectId: String(conversation.projectId || '').slice(0, 100),
       messagesJson: JSON.stringify(conversation.messages),
       updatedAt: Number(conversation.updatedAt) || Date.now(),
     };
   });
-  const upsert = database.prepare(`INSERT INTO conversations (id, title, messages_json, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET title = excluded.title, messages_json = excluded.messages_json, updated_at = excluded.updated_at`);
+  const upsert = database.prepare(`INSERT INTO conversations (id, title, project_id, messages_json, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET title = excluded.title, project_id = excluded.project_id, messages_json = excluded.messages_json, updated_at = excluded.updated_at`);
   database.exec('BEGIN IMMEDIATE');
   try {
-    for (const row of cleaned) upsert.run(row.id, row.title, row.messagesJson, row.updatedAt);
+    for (const row of cleaned) upsert.run(row.id, row.title, row.projectId, row.messagesJson, row.updatedAt);
     if (cleaned.length) {
       const placeholders = cleaned.map(() => '?').join(',');
       database.prepare(`DELETE FROM conversations WHERE id NOT IN (${placeholders})`).run(...cleaned.map((row) => row.id));

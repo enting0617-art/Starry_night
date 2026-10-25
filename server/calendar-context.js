@@ -51,7 +51,8 @@ export function buildCalendarContext(events, { userText = '', now = new Date(), 
     const reminder = event.remindBeforeMinutes === null || event.remindBeforeMinutes === undefined
       ? '无提醒'
       : event.remindBeforeMinutes === 0 ? '开始时提醒' : `提前${event.remindBeforeMinutes}分钟提醒`;
-    return `${index + 1}. ${start} — ${end} | ${event.title}${details ? ` | 说明：${details}` : ''} | ${reminder} | 时区：${eventZone}`;
+    const timing = event.kind === 'deadline' ? `截止点：${start}` : `${start} — ${end}`;
+    return `${index + 1}. ${timing} | ${event.title}${details ? ` | 说明：${details}` : ''} | ${reminder} | 时区：${eventZone}`;
   });
   const truncation = events.length > range.limit ? `\n只提供了最早的 ${range.limit} 条；如需更远安排，应说明当前上下文可能不完整。` : '';
   return `${instructions}\n查询范围：${rangeLabel}（${timeZone}）。\n已保存日程：\n${rows.join('\n')}${truncation}`;
