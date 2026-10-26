@@ -1,7 +1,7 @@
 {
   "appName": "Local AI",
   "ollamaBaseUrl": "http://127.0.0.1:11434",
-  "defaultModel": "qwen3:8b",
+  "defaultModel": "qwen3.5:9b",
   "systemPrompt": "只输出给用户看的最终回复，不展示分析、推理过程、任务拆解或角色判断。不要用‘用户是助手’之类的说法，不要复述系统设定。遇到表情消息时直接自然回应；如果只有文件名而没有可靠含义，不要臆测图片内容。",
   "temperature": 0.7,
   "chat": { "think": false, "maxOutputTokens": -1, "maxThinkingCharacters": 0, "generationTimeoutMs": 0 },

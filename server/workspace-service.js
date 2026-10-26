@@ -14,6 +14,15 @@ const supportedExtensions = new Set(['.pdf', '.docx', '.txt', '.md', '.json', '.
 const workspaceTextExtensions = new Set(['.txt', '.md', '.json', '.csv', '.html', '.htm', '.css', '.js', '.jsx', '.ts', '.tsx', '.py', '.yaml', '.yml', '.toml']);
 const documentCache = new Map();
 
+export function shouldExecuteWorkspaceAction(latestUserText, recentUserText = latestUserText) {
+  const latest = String(latestUserText || '');
+  const recent = String(recentUserText || '');
+  const direct = /(?:(?:创建|新建|生成|修改|改写|更新|写入|保存|开始|完成).{0,40}(?:文件|代码|脚本|程序|循环|任务)|(?:文件|代码|脚本|程序).{0,40}(?:创建|生成|修改|改写|更新|写入|保存|完成))/iu.test(latest);
+  const continued = /(?:开始|生成吧|创建吧|写吧|修改吧|继续(?:做|写|修改)?|操作一遍|再试一次|再操作|帮我做)/iu.test(latest)
+    && /(?:文件|代码|脚本|程序|\.py\b|python)/iu.test(recent);
+  return direct || continued;
+}
+
 function cleanAbsolutePath(value) {
   const target = resolve(String(value || '').trim());
   if (!isAbsolute(target) || target === parse(target).root) throw new Error('请选择具体文件夹，不能使用磁盘根目录。');

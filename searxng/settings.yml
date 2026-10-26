@@ -13,4 +13,4 @@ search:
 
 server:
   # 首次启动前请替换成随机 64 位十六进制字符串。
-  secret_key: "CHANGE_ME_TO_A_RANDOM_SECRET_BEFORE_STARTING"
+  secret_key: "67b3a2f43747f6ab1341e5bfc0bd30820feac6ee4ffe6b68a2d989e21d0379c0"

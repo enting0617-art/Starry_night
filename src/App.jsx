@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, FolderOpen, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Plus, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, X } from 'lucide-react';
+import { BellRing, Bot, Brain, Bug, CalendarDays, ChevronDown, CircleStop, FilePlus2, FileX2, FolderOpen, Globe2, ImagePlus, Images, LayoutDashboard, ListTodo, Menu, MessageSquarePlus, NotebookPen, PanelLeftClose, Pencil, Pin, Plus, Search, Send, Settings2, SmilePlus, Sparkles, Trash2, UserRound, Volume2, VolumeX, WandSparkles, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import DebugPanel from './DebugPanel.jsx';
@@ -81,6 +81,7 @@ export default function App() {
   const [historyReady, setHistoryReady] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => localStorage.getItem('xingkong:web-search') === 'true');
+  const [fileMode, setFileMode] = useState(() => localStorage.getItem('xingkong:file-mode') || 'auto');
   const [proactive, setProactive] = useState({ enabled: false, idleMinutes: 180, checkSeconds: 60 });
   const [proactiveStatus, setProactiveStatus] = useState('');
   const abortRef = useRef(null);
@@ -281,6 +282,14 @@ export default function App() {
     });
   }
 
+  function cycleFileMode() {
+    setFileMode((current) => {
+      const next = current === 'never' ? 'force' : current === 'force' ? 'auto' : 'never';
+      localStorage.setItem('xingkong:file-mode', next);
+      return next;
+    });
+  }
+
   useEffect(() => () => {
     voiceAbortRef.current?.abort();
     window.speechSynthesis?.cancel();
@@ -295,6 +304,18 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/tasks').then((response) => response.json()).then((data) => setProjects(data.tasks || [])).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const update = (event) => { if (Array.isArray(event.detail?.notes)) setNotebookNotes(event.detail.notes); };
+    window.addEventListener('starry:notebook-updated', update);
+    return () => window.removeEventListener('starry:notebook-updated', update);
+  }, []);
+
+  useEffect(() => {
+    const update = (event) => { if (Array.isArray(event.detail?.memories)) setMemories(event.detail.memories); };
+    window.addEventListener('starry:memories-updated', update);
+    return () => window.removeEventListener('starry:memories-updated', update);
   }, []);
 
   useEffect(() => {
@@ -577,7 +598,7 @@ export default function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: visualModel, messages: requestMessages, conversationId, projectId: active.projectId || '', systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled }),
+        body: JSON.stringify({ model: visualModel, messages: requestMessages, conversationId, projectId: active.projectId || '', systemPrompt: config.systemPrompt, temperature: config.temperature, webSearch: webSearchEnabled, fileMode }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -600,8 +621,16 @@ export default function App() {
         if (chunk.pythonSandbox) {
           updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, pythonSandbox: chunk.pythonSandbox } : message) }));
         }
+        if (chunk.workspaceProgress) {
+          updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, workspaceProgress: chunk.workspaceProgress } : message) }));
+          if (abortRef.current === controller) {
+            setGenerating(false);
+            setGenerationPhase('idle');
+            abortRef.current = null;
+          }
+        }
         if (chunk.workspaceResult) {
-          updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, workspaceResult: chunk.workspaceResult } : message) }));
+          updateConversation(conversationId, (conversation) => ({ ...conversation, messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, workspaceResult: chunk.workspaceResult, workspaceProgress: null } : message) }));
         }
         if (Array.isArray(chunk.searchReferences)) {
           searchReferences = chunk.searchReferences;
@@ -663,9 +692,11 @@ export default function App() {
         messages: conversation.messages.map((message) => message.id === assistantMessage.id ? { ...message, content: safePartialText ? `${safePartialText}\n\n（${errorText}，以上为未完成的回复）` : `（${errorText}）`, interrupted: true } : message),
       }));
     } finally {
-      setGenerating(false);
-      setGenerationPhase('idle');
-      abortRef.current = null;
+      if (abortRef.current === controller) {
+        setGenerating(false);
+        setGenerationPhase('idle');
+        abortRef.current = null;
+      }
     }
   }
 
@@ -777,7 +808,7 @@ export default function App() {
                 <article key={message.id} className={`message ${message.role}`}>
                   <div className="avatar">{message.role === 'user' ? <UserRound size={17} /> : <Bot size={18} />}</div>
                   <div className="message-content">
-                    <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}{message.workspaceResult && <span className="searched-badge"><FolderOpen size={11} />{message.workspaceResult.error ? '文件操作失败' : `已处理 ${message.workspaceResult.applied || 0} 项文件`}</span>}</div>
+                    <div className="message-author">{message.role === 'user' ? '你' : message.model || model}{message.searchedWeb && <span className="searched-badge"><Globe2 size={11} />已联网</span>}{message.workspaceProgress && <span className="searched-badge workspace-working"><FolderOpen size={11} />{message.workspaceProgress.message}</span>}{message.workspaceResult && <span className="searched-badge" title={message.workspaceResult.error || ''}><FolderOpen size={11} />{message.workspaceResult.error ? `文件操作失败：${message.workspaceResult.error}` : message.workspaceResult.applied ? `已处理 ${message.workspaceResult.applied} 项文件` : '未执行文件修改'}</span>}</div>
                     {message.role === 'assistant' ? <>{message.thinking && <details className="thinking-block"><summary>思考过程</summary><p>{message.thinking}</p></details>}<ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (message.emojiId ? '' : '正在等待模型返回…')}</ReactMarkdown>{message.calendarProposal && message.calendarProposalStatus !== 'dismissed' && <section className={`calendar-proposal ${message.calendarProposalStatus || 'pending'}`}><header><CalendarDays size={17} /><div><strong>{message.calendarProposal.title}</strong><span>{message.calendarProposalStatus === 'created' ? '已写入星空日历' : '等待你确认'}</span></div></header><p>{new Date(message.calendarProposal.startAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })} — {new Date(message.calendarProposal.endAt).toLocaleString('zh-CN', { timeZone: message.calendarProposal.timezone })}</p>{message.calendarProposal.description && <small>{message.calendarProposal.description}</small>}<small>{message.calendarProposal.remindBeforeMinutes === null ? '不提醒' : message.calendarProposal.remindBeforeMinutes === 0 ? '开始时提醒' : `提前 ${message.calendarProposal.remindBeforeMinutes} 分钟提醒`} · {message.calendarProposal.timezone}</small>{message.calendarProposalError && <em>{message.calendarProposalError}</em>}{message.calendarProposalStatus !== 'created' && <footer><button type="button" onClick={() => dismissCalendarProposal(active.id, message.id)} disabled={message.calendarProposalStatus === 'saving'}>暂不创建</button><button type="button" className="confirm" onClick={() => confirmCalendarProposal(active.id, message.id, message.calendarProposal)} disabled={message.calendarProposalStatus === 'saving'}>{message.calendarProposalStatus === 'saving' ? '正在创建…' : message.calendarProposalStatus === 'error' ? '重试创建' : '确认创建'}</button></footer>}</section>}{message.emojiId && <img className="assistant-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '星空发送的表情'} />}{message.pythonSandbox && <details className="sandbox-result"><summary>Python 隔离运行 {message.pythonSandbox.ran && message.pythonSandbox.exitCode === 0 ? '完成' : '未执行或失败'}</summary><p>{message.pythonSandbox.ran ? '已在 Windows 原生 AppContainer + Job Object 沙盒中执行。' : '未在宿主机执行。'}</p>{message.pythonSandbox.audit?.errors?.length ? <pre>{message.pythonSandbox.audit.errors.join('\n')}</pre> : null}{message.pythonSandbox.error ? <pre>{message.pythonSandbox.error}</pre> : null}{message.pythonSandbox.stdout ? <pre>{message.pythonSandbox.stdout}</pre> : null}{message.pythonSandbox.stderr ? <pre>{message.pythonSandbox.stderr}</pre> : null}</details>}{message.searchedWeb && <details className="search-references"><summary className="search-references-title"><Globe2 size={14} />参考资料（{message.searchReferences?.length || 0}）</summary><div className="search-reference-list">{message.searchReferences?.length ? message.searchReferences.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer"><strong>{reference.title}</strong><span>{reference.snippet}</span></a>) : <span className="search-reference-empty">{message.searchError ? `搜索未成功：${message.searchError}` : '本次搜索没有返回可引用的公开资料。'}</span>}</div></details>}{message.content && !message.interrupted && <div className="message-actions"><button type="button" className={speakingMessageId === message.id ? 'playing' : ''} onClick={() => playVoice(message.id, message.content)}><Volume2 size={14} />{voiceLoadingId === message.id ? '正在生成语音…' : speakingMessageId === message.id ? '停止播放' : '听语音'}</button></div>}</> : <>{message.emojiId && <img className="sent-emoji" src={`/api/emojis/${message.emojiId}/image`} alt={message.emojiDescription || '表情'} />}{message.imageId && <img className="sent-image" src={`/api/images/${message.imageId}`} alt={message.imageName || '聊天图片'} />}{!message.emojiId && <p>{message.content}</p>}</>}
                     {message.role === 'assistant' && message.calendarProposals?.length > 0 && <CalendarProposalGroup message={message} onConfirm={(index, proposal) => confirmCalendarProposalAt(active.id, message.id, index, proposal)} onConfirmAll={(actionable) => confirmAllCalendarProposals(active.id, message.id, actionable)} onDismiss={(index) => dismissCalendarProposalAt(active.id, message.id, index)} />}
                   </div>
@@ -799,19 +830,12 @@ export default function App() {
           {imageError && <small role="alert" className="voice-error">{imageError}</small>}
           {voiceError && <small role="alert" className="voice-error">{voiceError}</small>}
           <form className="composer" onSubmit={submit}>
-            <button type="button" className={`composer-tool ${emojiPickerOpen ? 'active' : ''}`} onClick={() => setEmojiPickerOpen((value) => !value)} aria-label="选择表情"><SmilePlus size={20} /></button>
-            <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={selectImage} />
-            <button type="button" className={`composer-tool ${selectedImage ? 'active' : ''}`} onClick={() => imageInputRef.current?.click()} disabled={imageUploading || generating} aria-label="上传图片" title="让本地模型看图"><ImagePlus size={20} /></button>
             <textarea ref={composerInputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
             }} placeholder={model ? `向 ${model} 发送消息…` : '请先启动 Ollama 并安装模型'} disabled={!model || generating} rows="1" />
-            {generating ? (
-              <button type="button" className="send-button stop generation-stop" onClick={() => abortRef.current?.abort()} aria-label={generationPhase === 'thinking' ? '停止思考' : generationPhase === 'writing' ? '停止写作' : '停止生成'}><CircleStop size={18} /><span>{generationPhase === 'thinking' ? '停止思考' : generationPhase === 'writing' ? '停止写作' : '停止生成'}</span></button>
-            ) : (
-              <button type="submit" className="send-button" disabled={(!input.trim() && !selectedEmoji && !selectedImage) || !model || imageUploading} aria-label="发送"><Send size={19} /></button>
-            )}
+            <div className="composer-toolbar"><div className="composer-tools"><button type="button" className={`composer-tool ${emojiPickerOpen ? 'active' : ''}`} onClick={() => setEmojiPickerOpen((value) => !value)} aria-label="选择表情" title="选择表情"><SmilePlus size={20} /></button><input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={selectImage} /><button type="button" className={`composer-tool ${selectedImage ? 'active' : ''}`} onClick={() => imageInputRef.current?.click()} disabled={imageUploading || generating} aria-label="上传图片" title="上传图片"><ImagePlus size={20} /></button><button type="button" className={`composer-tool file-mode ${fileMode}`} onClick={cycleFileMode} aria-label={`文件模式：${fileMode === 'never' ? '不生成文件' : fileMode === 'force' ? '强制生成文件' : '自动生成文件'}`} title="点击切换文件生成模式">{fileMode === 'never' ? <FileX2 size={20} /> : fileMode === 'force' ? <FilePlus2 size={20} /> : <WandSparkles size={20} />}<span>{fileMode === 'never' ? '不生成文件' : fileMode === 'force' ? '强制生成文件' : '自动生成文件'}</span></button></div>{generating ? <button type="button" className="send-button stop generation-stop" onClick={() => abortRef.current?.abort()} aria-label={generationPhase === 'thinking' ? '停止思考' : generationPhase === 'writing' ? '停止写作' : '停止生成'}><CircleStop size={18} /><span>{generationPhase === 'thinking' ? '停止思考' : generationPhase === 'writing' ? '停止写作' : '停止生成'}</span></button> : <button type="submit" className="send-button" disabled={(!input.trim() && !selectedEmoji && !selectedImage) || !model || imageUploading} aria-label="发送"><Send size={19} /></button>}</div>
           </form>
-          <small>Enter 发送 · Shift + Enter 换行 · 对话保存在项目文件夹{webSearchEnabled ? ' · 智能联网已开启' : ''}</small>
+          <small>Enter 发送 · Shift + Enter 换行 · 文件模式：{fileMode === 'never' ? '不生成' : fileMode === 'force' ? '强制生成' : '自动判断'}{webSearchEnabled ? ' · 智能联网已开启' : ''}</small>
         </div></>}
       </main>
     </div>

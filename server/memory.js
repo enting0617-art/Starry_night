@@ -140,6 +140,28 @@ export async function deduplicateMemories() {
   return { before: memories.length, after: result.items.length, removed: result.removed };
 }
 
+export async function saveMemoryFacts(values, config) {
+  const facts = (Array.isArray(values) ? values : []).map(String).map((item) => item.replace(/\s+/gu, ' ').trim())
+    .filter((item) => item.startsWith('用户') && isUsableMemory({ text: item })).slice(0, 8);
+  if (!facts.length) return { received: 0, saved: 0, memories: (await listMemories()).map(withoutEmbedding) };
+  const memories = await readMemories();
+  let saved = 0;
+  for (const text of facts) {
+    const duplicate = findDuplicate(memories, text);
+    if (duplicate) {
+      if (!duplicate.pinned && text.length > duplicate.text.length) { duplicate.text = text; duplicate.embedding = await embed(text, config); }
+      duplicate.updatedAt = new Date().toISOString();
+      continue;
+    }
+    const now = new Date().toISOString();
+    memories.push({ id: globalThis.crypto.randomUUID(), text, createdAt: now, updatedAt: now, embedding: await embed(text, config) });
+    saved += 1;
+  }
+  const deduplicated = deduplicateItems(memories).items.slice(-config.companion.maxMemories);
+  await saveMemories(deduplicated);
+  return { received: facts.length, saved, memories: deduplicated.filter(isUsableMemory).map(withoutEmbedding) };
+}
+
 export async function extractAndSaveMemories({ userText, assistantText, model, config }) {
   if (!config.companion.memoryEnabled || !userText || !assistantText) return;
   try {
@@ -164,29 +186,7 @@ export async function extractAndSaveMemories({ userText, assistantText, model, c
     const facts = Array.isArray(parsed.memories)
       ? parsed.memories.map(String).map((item) => item.trim()).filter((item) => item.startsWith('用户') && isUsableMemory({ text: item })).slice(0, 3)
       : [];
-    if (!facts.length) return;
-
-    const memories = await readMemories();
-    for (const text of facts) {
-      const duplicate = findDuplicate(memories, text);
-      if (duplicate) {
-        if (!duplicate.pinned && text.length > duplicate.text.length) {
-          duplicate.text = text;
-          duplicate.embedding = await embed(text, config);
-        }
-        duplicate.updatedAt = new Date().toISOString();
-        continue;
-      }
-      memories.push({
-        id: globalThis.crypto.randomUUID(),
-        text,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        embedding: await embed(text, config),
-      });
-    }
-    const deduplicated = deduplicateItems(memories).items;
-    await saveMemories(deduplicated.slice(-config.companion.maxMemories));
+    await saveMemoryFacts(facts, config);
   } catch (error) {
     console.warn(`Memory extraction skipped: ${error.message}`);
   }

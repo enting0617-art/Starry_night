@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import JSZip from 'jszip';
-import { applyWorkspaceActions, buildInboxContext, buildWorkspaceContext, createInboxTaskFolder, inboxPath } from '../server/workspace-service.js';
+import { applyWorkspaceActions, buildInboxContext, buildWorkspaceContext, createInboxTaskFolder, inboxPath, shouldExecuteWorkspaceAction } from '../server/workspace-service.js';
 
 test('applies AI file actions only inside an authorized workspace', async () => {
   const root = await mkdtemp(join(tmpdir(), 'xingkong-workspace-'));
@@ -20,6 +20,12 @@ test('applies AI file actions only inside an authorized workspace', async () => 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('recognizes a follow-up that continues an earlier file request', () => {
+  assert.equal(shouldExecuteWorkspaceAction('那你开始帮我生成吧', '给我一个 Python 文件\n那你开始帮我生成吧'), true);
+  assert.equal(shouldExecuteWorkspaceAction('文件操作失败了，你再操作一遍', '修改 hello_world.py\n文件操作失败了，你再操作一遍'), true);
+  assert.equal(shouldExecuteWorkspaceAction('你知道冒泡排序吗', '你知道冒泡排序吗'), false);
 });
 
 test('reads supported text files from the document inbox', async () => {

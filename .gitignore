@@ -4,3 +4,4 @@ dist/
 config.local.json
 npm-debug.log*
 data/sandbox/
+knowledge/
